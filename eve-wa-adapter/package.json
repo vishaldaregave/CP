@@ -13,6 +13,7 @@
     "start": "eve start",
     "start:api": "node scripts/start-server.mjs",
     "test": "node --test test-instagram.mjs test-verification.mjs",
+    "test:profile": "node scripts/test-investigation.mjs",
     "typecheck": "tsc"
   },
   "dependencies": {

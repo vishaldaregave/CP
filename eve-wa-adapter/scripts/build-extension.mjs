@@ -53,43 +53,28 @@ function transpileTsFile(srcPath, destPath, replaceImports = true) {
   fs.writeFileSync(destPath, jsCode, "utf-8");
 }
 
+// Helper to transpile TS file to both dist and source for convenient loading
+function buildTsModule(relSrcPath, relDestPath) {
+  const src = path.join(SRC_DIR, relSrcPath);
+  const distDest = path.join(DIST_DIR, relDestPath);
+  const srcDest = path.join(SRC_DIR, relDestPath);
+  transpileTsFile(src, distDest);
+  transpileTsFile(src, srcDest);
+}
+
 // Build shared files
-transpileTsFile(
-  path.join(SRC_DIR, "shared/types.ts"),
-  path.join(DIST_DIR, "shared/types.js"),
-);
-transpileTsFile(
-  path.join(SRC_DIR, "shared/profileDetector.ts"),
-  path.join(DIST_DIR, "shared/profileDetector.js"),
-);
-transpileTsFile(
-  path.join(SRC_DIR, "shared/domExtractor.ts"),
-  path.join(DIST_DIR, "shared/domExtractor.js"),
-);
-transpileTsFile(
-  path.join(SRC_DIR, "shared/postCollector.ts"),
-  path.join(DIST_DIR, "shared/postCollector.js"),
-);
-transpileTsFile(
-  path.join(SRC_DIR, "shared/highlightCollector.ts"),
-  path.join(DIST_DIR, "shared/highlightCollector.js"),
-);
-transpileTsFile(
-  path.join(SRC_DIR, "shared/apiClient.ts"),
-  path.join(DIST_DIR, "shared/apiClient.js"),
-);
+buildTsModule("shared/types.ts", "shared/types.js");
+buildTsModule("shared/profileDetector.ts", "shared/profileDetector.js");
+buildTsModule("shared/domExtractor.ts", "shared/domExtractor.js");
+buildTsModule("shared/postCollector.ts", "shared/postCollector.js");
+buildTsModule("shared/highlightCollector.ts", "shared/highlightCollector.js");
+buildTsModule("shared/apiClient.ts", "shared/apiClient.js");
 
 // Build service worker
-transpileTsFile(
-  path.join(SRC_DIR, "background/service-worker.ts"),
-  path.join(DIST_DIR, "background/service-worker.js"),
-);
+buildTsModule("background/service-worker.ts", "background/service-worker.js");
 
 // Build sidepanel client
-transpileTsFile(
-  path.join(SRC_DIR, "sidepanel/sidepanel.ts"),
-  path.join(DIST_DIR, "sidepanel/sidepanel.js"),
-);
+buildTsModule("sidepanel/sidepanel.ts", "sidepanel/sidepanel.js");
 
 // Build self-contained content script (inline profileDetector, highlightCollector, postCollector, and domExtractor for classic content script execution)
 const profileDetectorCode = fs.readFileSync(path.join(SRC_DIR, "shared/profileDetector.ts"), "utf-8");
@@ -141,10 +126,14 @@ ${cleanContentScript}
 
 const bundledJs = stripTypeScriptTypes(bundledContentScript);
 
-const contentDest = path.join(DIST_DIR, "content/instagram-profile.js");
-fs.mkdirSync(path.dirname(contentDest), { recursive: true });
-fs.writeFileSync(contentDest, bundledJs, "utf-8");
+const distContentDest = path.join(DIST_DIR, "content/instagram-profile.js");
+fs.mkdirSync(path.dirname(distContentDest), { recursive: true });
+fs.writeFileSync(distContentDest, bundledJs, "utf-8");
+
+const srcContentDest = path.join(SRC_DIR, "content/instagram-profile.js");
+fs.mkdirSync(path.dirname(srcContentDest), { recursive: true });
+fs.writeFileSync(srcContentDest, bundledJs, "utf-8");
 
 console.log("✓ Transpiled background/service-worker.js, sidepanel/sidepanel.js, and content/instagram-profile.js");
-console.log("🎉 Chrome Extension Manifest V3 build complete at: dist/extension/");
+console.log("🎉 Chrome Extension Manifest V3 build complete at: dist/extension/ and extension/");
 

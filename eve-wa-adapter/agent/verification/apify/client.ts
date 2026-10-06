@@ -44,7 +44,7 @@ export class ApifyService {
     
     const { items } = await this.client.dataset(run.defaultDatasetId).listItems();
     
-    return items.map(item => normalizeAd(item, {
+    return items.map((item: any) => normalizeAd(item, {
       run_id: runId,
       dataset_id: run.defaultDatasetId!,
       actor_id: this.actorId,
@@ -67,7 +67,7 @@ export class ApifyService {
 
     const { items } = await this.client.dataset(run.defaultDatasetId).listItems();
     
-    return items.map(item => normalizeAd(item, {
+    return items.map((item: any) => normalizeAd(item, {
       run_id: run.id,
       dataset_id: run.defaultDatasetId!,
       actor_id: this.actorId,
