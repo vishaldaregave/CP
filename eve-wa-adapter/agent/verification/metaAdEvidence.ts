@@ -6,6 +6,7 @@ import type {
   ProductInfo,
   SellerInfo,
 } from "./types.ts";
+import { ApifyClient } from "apify-client";
 
 function cleanHandle(handle?: string | null): string | null {
   if (!handle) return null;
@@ -26,14 +27,14 @@ function cleanHandle(handle?: string | null): string | null {
  *
  * NOTE: Never logs the access token.
  */
+import { ApifyService } from "./apify/index.ts";
+
 export async function collectMetaAdEvidence(
   inputOrEvidence: MetaAdCollectionInput | InstagramEvidence,
   product?: ProductInfo,
   seller?: SellerInfo,
 ): Promise<MetaAdEvidence> {
-  const token = process.env.META_AD_LIBRARY_ACCESS_TOKEN;
   const country = process.env.META_AD_LIBRARY_COUNTRY || "IN";
-  const apiVersion = process.env.META_API_VERSION || "v20.0";
   const collectedAt = new Date().toISOString();
 
   // Normalize input fields
@@ -62,56 +63,42 @@ export async function collectMetaAdEvidence(
   }
 
   // Build candidate search terms with strict prioritization
-  // 1. Page ID (if present)
-  // 2. Seller display name
-  // 3. Instagram handle without @
-  // 4. Brand name
-  // 5. Product name
   const candidateTerms: string[] = [];
-  const candidatePageIds: string[] = [];
-
   if (pageId && pageId.trim().length > 0) {
-    candidatePageIds.push(pageId.trim());
+    candidateTerms.push(pageId.trim());
   }
-
   if (sellerName && sellerName.trim().length > 2) {
     const cleanSeller = sellerName.trim();
     if (!candidateTerms.includes(cleanSeller)) candidateTerms.push(cleanSeller);
   }
-
   if (instagramHandle && !candidateTerms.includes(instagramHandle)) {
     candidateTerms.push(instagramHandle);
   }
-
   if (brandName && brandName.trim().length > 2 && !candidateTerms.includes(brandName.trim())) {
     candidateTerms.push(brandName.trim());
   }
-
   if (productName && productName.trim().length > 3 && !candidateTerms.includes(productName.trim())) {
-    // Only search by product name if terms list is small, prioritizing seller identity
     if (candidateTerms.length < 3) {
       candidateTerms.push(productName.trim());
     }
   }
 
-  const queryTerms = candidatePageIds.length > 0 ? candidatePageIds.concat(candidateTerms) : candidateTerms;
-
-  if (!token || !token.trim()) {
+  if (!process.env.APIFY_API_TOKEN || !process.env.APIFY_API_TOKEN.trim()) {
     return {
       status: "unavailable",
-      queryTerms,
+      queryTerms: candidateTerms,
       country,
       ads: [],
       totalFound: 0,
       source: "meta_ad_library",
       collectedAt,
-      error: "No Meta Ad Library access token configured",
-      limitation: "Meta Ad Library API access token is missing.",
-      evidenceSource: "Meta Ad Library",
+      error: "No Apify API token configured",
+      limitation: "Apify API access token is missing in .env",
+      evidenceSource: "Apify Scraper",
     };
   }
 
-  if (queryTerms.length === 0) {
+  if (candidateTerms.length === 0) {
     return {
       status: "not_found",
       queryTerms: [],
@@ -120,235 +107,93 @@ export async function collectMetaAdEvidence(
       totalFound: 0,
       source: "meta_ad_library",
       collectedAt,
-      limitation: "No matching ads were returned by the Meta Ad Library API for the current query.",
-      evidenceSource: "Meta Ad Library",
+      limitation: "No matching ads were returned because no search terms were generated.",
+      evidenceSource: "Apify Scraper",
     };
   }
 
-  const TIMEOUT_MS = 8000;
-  let lastApiError: string | null = null;
-  let commercialCoverageLimitation: string | null = null;
-  let hadSuccessfulQuery = false;
   const allFoundAds: MetaAdRecord[] = [];
-  const seenAdIds = new Set<string>();
+  let lastApiError: string | null = null;
+  let hadSuccessfulQuery = false;
 
-  // 1. Search by Page IDs if available
-  for (const pid of candidatePageIds) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const apifyService = new ApifyService();
+    console.log(`[MetaAdEvidence] Calling Apify Actor with term:`, candidateTerms[0]);
+    
+    // We use the first highest-priority term as query for the scraper
+    const normalizedAds = await apifyService.runMetaAdsScraperSync({
+        query: candidateTerms[0],
+        maxItems: 10,
+        country
+    });
 
-      const url = new URL(`https://graph.facebook.com/${apiVersion}/ads_archive`);
-      url.searchParams.set("access_token", token);
-      url.searchParams.set("ad_reached_countries", `["${country}"]`);
-      url.searchParams.set("ad_type", "ALL");
-      url.searchParams.set("search_page_ids", pid);
-      url.searchParams.set("publisher_platforms", '["INSTAGRAM"]');
-      url.searchParams.set("limit", "10");
-      url.searchParams.set(
-        "fields",
-        "id,page_id,page_name,ad_creation_time,ad_delivery_start_time,ad_delivery_stop_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,ad_snapshot_url,publisher_platforms",
-      );
-
-      const res = await fetch(url.toString(), {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        const errMsg = (errJson as { error?: { message?: string; code?: number } })?.error?.message || `HTTP ${res.status}`;
-        lastApiError = errMsg;
-        if (/commercial|coverage|permission|country|ad_type/i.test(errMsg)) {
-          commercialCoverageLimitation = "Meta's official Ad Library API did not provide the requested commercial-ad coverage for this country/category.";
-        }
-        console.warn(`[MetaAdEvidence] Page ID query for "${pid}" returned ${res.status}: ${errMsg}`);
-        continue;
-      }
-
+    if (normalizedAds && normalizedAds.length > 0) {
       hadSuccessfulQuery = true;
-      const data = (await res.json()) as {
-        data?: Array<{
-          id?: string;
-          page_id?: string;
-          page_name?: string;
-          publisher_platforms?: string[];
-          ad_delivery_start_time?: string;
-          ad_delivery_stop_time?: string;
-          ad_creative_bodies?: string[];
-          ad_creative_link_titles?: string[];
-          ad_creative_link_descriptions?: string[];
-          ad_creative_link_captions?: string[];
-          ad_snapshot_url?: string;
-        }>;
-      };
-
-      if (data.data && data.data.length > 0) {
-        for (const item of data.data) {
-          if (item.id && !seenAdIds.has(item.id)) {
-            seenAdIds.add(item.id);
-            const bodies = item.ad_creative_bodies || [];
-            allFoundAds.push({
-              libraryId: item.id,
-              advertiserName: item.page_name || null,
-              advertiserPageId: item.page_id || null,
-              publisherPlatforms: item.publisher_platforms || ["INSTAGRAM"],
-              deliveryStart: item.ad_delivery_start_time ? item.ad_delivery_start_time.split("T")[0] : null,
-              deliveryEnd: item.ad_delivery_stop_time ? item.ad_delivery_stop_time.split("T")[0] : "Active",
-              adText: bodies.filter(Boolean).join("\n") || null,
-              linkTitle: item.ad_creative_link_titles?.[0] || null,
-              linkDescription: item.ad_creative_link_descriptions?.[0] || null,
-              adSnapshotUrl: item.ad_snapshot_url || null,
-              destinationUrl: item.ad_creative_link_captions?.[0] || null,
-              evidenceSource: "meta_ad_library",
-            });
-          }
+      const seenAdIds = new Set<string>();
+      
+      for (const ad of normalizedAds) {
+        if (!seenAdIds.has(ad.external_ad_id)) {
+            seenAdIds.add(ad.external_ad_id);
+            // Push it to allFoundAds. Since MetaAdRecord is now identically typed to NormalizedApifyAd, this is completely safe.
+            allFoundAds.push(ad as MetaAdRecord);
         }
       }
-    } catch (err: unknown) {
-      const isAbort = err instanceof Error && err.name === "AbortError";
-      lastApiError = isAbort ? "Request timed out" : err instanceof Error ? err.message : String(err);
-      console.warn(`[MetaAdEvidence] Page ID request for "${pid}" failed: ${lastApiError}`);
     }
+  } catch (err: any) {
+    lastApiError = err?.message || String(err);
+    console.warn(`[MetaAdEvidence] Apify Scraper failed: ${lastApiError}`);
   }
 
-  // 2. Search by Terms (Seller display name -> Handle -> Brand -> Product)
-  for (const term of candidateTerms) {
-    if (allFoundAds.length >= 10) break;
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-      const url = new URL(`https://graph.facebook.com/${apiVersion}/ads_archive`);
-      url.searchParams.set("access_token", token);
-      url.searchParams.set("ad_reached_countries", `["${country}"]`);
-      url.searchParams.set("ad_type", "ALL");
-      url.searchParams.set("search_terms", term);
-      url.searchParams.set("publisher_platforms", '["INSTAGRAM"]');
-      url.searchParams.set("limit", "10");
-      url.searchParams.set(
-        "fields",
-        "id,page_id,page_name,ad_creation_time,ad_delivery_start_time,ad_delivery_stop_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,ad_snapshot_url,publisher_platforms",
-      );
-
-      const res = await fetch(url.toString(), {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        const errMsg = (errJson as { error?: { message?: string; code?: number } })?.error?.message || `HTTP ${res.status}`;
-        lastApiError = errMsg;
-        if (/commercial|coverage|permission|country|ad_type/i.test(errMsg)) {
-          commercialCoverageLimitation = "Meta's official Ad Library API did not provide the requested commercial-ad coverage for this country/category.";
-        }
-        console.warn(`[MetaAdEvidence] Query for "${term}" returned ${res.status}: ${errMsg}`);
-        continue;
-      }
-
-      hadSuccessfulQuery = true;
-      const data = (await res.json()) as {
-        data?: Array<{
-          id?: string;
-          page_id?: string;
-          page_name?: string;
-          publisher_platforms?: string[];
-          ad_delivery_start_time?: string;
-          ad_delivery_stop_time?: string;
-          ad_creative_bodies?: string[];
-          ad_creative_link_titles?: string[];
-          ad_creative_link_descriptions?: string[];
-          ad_creative_link_captions?: string[];
-          ad_snapshot_url?: string;
-        }>;
-      };
-
-      if (data.data && data.data.length > 0) {
-        for (const item of data.data) {
-          if (item.id && !seenAdIds.has(item.id)) {
-            seenAdIds.add(item.id);
-            const bodies = item.ad_creative_bodies || [];
-            allFoundAds.push({
-              libraryId: item.id,
-              advertiserName: item.page_name || null,
-              advertiserPageId: item.page_id || null,
-              publisherPlatforms: item.publisher_platforms || ["INSTAGRAM"],
-              deliveryStart: item.ad_delivery_start_time ? item.ad_delivery_start_time.split("T")[0] : null,
-              deliveryEnd: item.ad_delivery_stop_time ? item.ad_delivery_stop_time.split("T")[0] : "Active",
-              adText: bodies.filter(Boolean).join("\n") || null,
-              linkTitle: item.ad_creative_link_titles?.[0] || null,
-              linkDescription: item.ad_creative_link_descriptions?.[0] || null,
-              adSnapshotUrl: item.ad_snapshot_url || null,
-              destinationUrl: item.ad_creative_link_captions?.[0] || null,
-              evidenceSource: "meta_ad_library",
-            });
-          }
-        }
-      }
-    } catch (err: unknown) {
-      const isAbort = err instanceof Error && err.name === "AbortError";
-      lastApiError = isAbort ? "Request timed out" : err instanceof Error ? err.message : String(err);
-      console.warn(`[MetaAdEvidence] Request for "${term}" failed: ${lastApiError}`);
-    }
-  }
-
-  // Return structured results
   if (allFoundAds.length > 0) {
     const topAd = allFoundAds[0];
     return {
       status: "found",
-      queryTerms,
+      queryTerms: candidateTerms,
       country,
       ads: allFoundAds,
       totalFound: allFoundAds.length,
       source: "meta_ad_library",
       collectedAt,
-      // Top-level properties for convenience
-      libraryId: topAd.libraryId,
-      advertiserName: topAd.advertiserName || undefined,
-      advertiserPageId: topAd.advertiserPageId || undefined,
-      publisherPlatforms: topAd.publisherPlatforms,
-      deliveryStart: topAd.deliveryStart || undefined,
-      deliveryEnd: topAd.deliveryEnd || undefined,
-      adText: topAd.adText || undefined,
-      linkTitle: topAd.linkTitle || undefined,
-      linkDescription: topAd.linkDescription || undefined,
-      adSnapshotUrl: topAd.adSnapshotUrl || undefined,
-      destinationUrl: topAd.destinationUrl || undefined,
-      evidenceSource: "Meta Ad Library",
+      // Backward compatibility fields expected by formatting / risk engine layers
+      libraryId: topAd.external_ad_id,
+      advertiserName: topAd.advertiser.name || undefined,
+      advertiserPageId: topAd.advertiser.page_id || undefined,
+      publisherPlatforms: topAd.platforms,
+      deliveryStart: topAd.delivery.start_date || undefined,
+      deliveryEnd: topAd.delivery.end_date || undefined,
+      adText: topAd.creative.primary_text || undefined,
+      linkTitle: topAd.creative.headline || undefined,
+      linkDescription: topAd.creative.description || undefined,
+      adSnapshotUrl: topAd.source.snapshot_url || undefined,
+      destinationUrl: topAd.creative.link_url || undefined,
+      evidenceSource: "Apify Scraper",
     };
   }
 
   if (!hadSuccessfulQuery && lastApiError) {
     return {
-      status: commercialCoverageLimitation ? "unavailable" : "error",
-      queryTerms,
+      status: "error",
+      queryTerms: candidateTerms,
       country,
       ads: [],
       totalFound: 0,
       source: "meta_ad_library",
       collectedAt,
       error: lastApiError,
-      limitation: commercialCoverageLimitation || "Meta Ad Library API encountered an error or was unavailable.",
-      evidenceSource: "Meta Ad Library",
+      limitation: "Apify Scraper encountered an error or was unavailable.",
+      evidenceSource: "Apify Scraper",
     };
   }
 
   return {
     status: "not_found",
-    queryTerms,
+    queryTerms: candidateTerms,
     country,
     ads: [],
     totalFound: 0,
     source: "meta_ad_library",
     collectedAt,
-    limitation: "No matching ads were returned by the Meta Ad Library API for the current query.",
-    evidenceSource: "Meta Ad Library",
+    limitation: "No matching ads were returned by the Apify Scraper for the current queries.",
+    evidenceSource: "Apify Scraper",
   };
 }

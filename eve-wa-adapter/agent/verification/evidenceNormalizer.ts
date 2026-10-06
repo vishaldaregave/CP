@@ -45,8 +45,8 @@ export function normalizeEvidence(
   }
   if (metaAd?.ads && metaAd.ads.length > 0) {
     for (const ad of metaAd.ads) {
-      if (ad.linkTitle) {
-        normalized.product_name.push({ source: "meta_ad", value: ad.linkTitle, method: "ad_creative_title" });
+      if (ad.creative.headline) {
+        normalized.product_name.push({ source: "meta_ad", value: ad.creative.headline, method: "ad_creative_title" });
       }
     }
   } else if (metaAd?.linkTitle) {
@@ -72,8 +72,8 @@ export function normalizeEvidence(
   }
   if (metaAd?.ads && metaAd.ads.length > 0) {
     for (const ad of metaAd.ads) {
-      if (ad.advertiserName && !normalized.brand.some((b) => b.value === ad.advertiserName && b.source === "meta_ad")) {
-        normalized.brand.push({ source: "meta_ad", value: ad.advertiserName, method: "meta_page_name" });
+      if (ad.advertiser.name && !normalized.brand.some((b) => b.value === ad.advertiser.name && b.source === "meta_ad")) {
+        normalized.brand.push({ source: "meta_ad", value: ad.advertiser.name, method: "meta_page_name" });
       }
     }
   } else if (metaAd?.advertiserName) {
@@ -95,8 +95,8 @@ export function normalizeEvidence(
   }
   if (metaAd?.ads && metaAd.ads.length > 0) {
     for (const ad of metaAd.ads) {
-      if (ad.advertiserName && !normalized.seller.some((s) => s.value === ad.advertiserName && s.source === "meta_ad")) {
-        normalized.seller.push({ source: "meta_ad", value: ad.advertiserName, method: "meta_ad_advertiser" });
+      if (ad.advertiser.name && !normalized.seller.some((s) => s.value === ad.advertiser.name && s.source === "meta_ad")) {
+        normalized.seller.push({ source: "meta_ad", value: ad.advertiser.name, method: "meta_ad_advertiser" });
       }
     }
   } else if (metaAd?.advertiserName) {
@@ -148,8 +148,8 @@ export function normalizeEvidence(
   }
   if (metaAd?.ads && metaAd.ads.length > 0) {
     for (const ad of metaAd.ads) {
-      if (ad.destinationUrl && !normalized.website.some((w) => w.value === ad.destinationUrl && w.source === "meta_ad")) {
-        normalized.website.push({ source: "meta_ad", value: ad.destinationUrl, method: "ad_destination_url" });
+      if (ad.creative.link_url && !normalized.website.some((w) => w.value === ad.creative.link_url && w.source === "meta_ad")) {
+        normalized.website.push({ source: "meta_ad", value: ad.creative.link_url, method: "ad_destination_url" });
       }
     }
   } else if (metaAd?.destinationUrl) {
@@ -186,8 +186,8 @@ export function normalizeEvidence(
   }
   if (metaAd?.ads && metaAd.ads.length > 0) {
     for (const ad of metaAd.ads) {
-      if (ad.adText && !normalized.claims.some((c) => c.value === ad.adText && c.source === "meta_ad")) {
-        normalized.claims.push({ source: "meta_ad", value: ad.adText, method: "ad_creative_body" });
+      if (ad.creative.primary_text && !normalized.claims.some((c) => c.value === ad.creative.primary_text && c.source === "meta_ad")) {
+        normalized.claims.push({ source: "meta_ad", value: ad.creative.primary_text, method: "ad_creative_body" });
       }
     }
   } else if (metaAd?.adText) {

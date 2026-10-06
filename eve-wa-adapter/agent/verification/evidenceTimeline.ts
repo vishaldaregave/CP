@@ -92,12 +92,12 @@ export function buildEvidenceTimeline(input: TimelineBuilderInput): EvidenceTime
 
     if (metaAd.ads && metaAd.ads.length > 0) {
       for (const ad of metaAd.ads.slice(0, 3)) {
-        if (ad.deliveryStart) {
+        if (ad.delivery?.start_date) {
           events.push({
-            timestamp: ad.deliveryStart,
+            timestamp: ad.delivery.start_date,
             source: "meta_ad",
             event: "Meta advertisement launched",
-            description: `Ad campaign started: "${(ad.adText || ad.linkTitle || "Campaign").slice(0, 60)}..."`,
+            description: `Ad campaign started: "${(ad.creative?.primary_text || ad.creative?.headline || "Campaign").slice(0, 60)}..."`,
             confidence: 92,
           });
         }
