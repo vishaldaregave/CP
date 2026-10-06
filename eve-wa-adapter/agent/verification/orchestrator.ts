@@ -1,6 +1,7 @@
 import { collectInstagramEvidence, parseInstagramUrl } from "./instagramEvidence.ts";
 import { extractProductAndSeller } from "./extractor.ts";
 import { collectMetaAdEvidence } from "./metaAdEvidence.ts";
+import { analyzeAdvertisingIntelligence } from "./advertisingIntelligence.ts";
 import { collectWebsiteEvidence } from "./websiteEvidence.ts";
 import { downloadMedia } from "./mediaUtils.ts";
 import { performOCR } from "./ocrEngine.ts";
@@ -25,6 +26,10 @@ import {
   compareAdvertisedVsReceived,
 } from "./productComparison.ts";
 import { analyzeReceivedProductImage } from "./receivedProductAnalyzer.ts";
+import {
+  investigateInstagramProfile,
+  buildProfileInvestigationFromEvidence,
+} from "./profileInvestigator.ts";
 import type {
   VerificationResult,
   WebsiteEvidence,
@@ -32,11 +37,13 @@ import type {
   MediaEvidence,
   ImageCrossCheckResult,
   MetaAdEvidence,
+  AdvertisingIntelligence,
   AdClaimAnalysis,
   SellerIdentityGraph,
   ProductConsistencyReport,
   EvidenceTimeline,
   PostPurchaseComparisonResult,
+  ProfileInvestigation,
 } from "./types.ts";
 
 /**
@@ -251,6 +258,16 @@ export async function verifyInstagramProduct(
     `[VERIFY] AD_CLAIM_ANALYSIS: detected=${ad_claim_analysis.claims_detected.length} pressure_signals=${ad_claim_analysis.ad_pressure_signals.length}`,
   );
 
+  // Compute Advertising Intelligence (Feature: Deep Advertising Intelligence)
+  const advertising_intelligence = analyzeAdvertisingIntelligence(
+    meta_ad_evidence,
+    evidence,
+    product,
+    seller,
+    website_evidence,
+    ad_claim_analysis,
+  );
+
   // Compute Advertiser Identity Comparison
   const advertiserIdentity = compareAdvertiserIdentity(
     seller.username || evidence.account.username || seller.name,
@@ -317,6 +334,7 @@ export async function verifyInstagramProduct(
     media_evidence,
     meta_ad_evidence,
     ad_claim_analysis,
+    advertising_intelligence,
   );
 
   const fieldResults = Object.values(trust_matrix.fields).map((f) => f.result);
@@ -356,6 +374,7 @@ export async function verifyInstagramProduct(
     seller_identity_graph,
     product_consistency,
     null,
+    advertising_intelligence,
   );
   const tRiskDuration = Date.now() - tRiskStart;
   console.info(`[VERIFY LIVE 022] RISK_ENGINE_END: risk="${risk.risk_level}" confidence=${risk.confidence}% coverage=${risk.evidence_coverage}%`);
@@ -364,14 +383,25 @@ export async function verifyInstagramProduct(
     `[VERIFY] RISK_RESULT: final_risk="${risk.risk_level}" confidence=${risk.confidence}% score=${risk.score} coverage=${risk.evidence_coverage}% recommendation="${risk.recommendation.slice(0, 60)}..."`,
   );
 
+  // 12. Deep Profile Investigation (Phase 2)
+  const profile_investigation = buildProfileInvestigationFromEvidence(
+    evidence,
+    meta_ad_evidence,
+    website_evidence,
+    advertising_intelligence,
+    seller_identity_graph,
+  );
+
   const hasAnyMeaningfulData = Boolean(
     evidence.post.caption ||
     evidence.account.username ||
     website_evidence?.status === "accessible" ||
     meta_ad_evidence?.status === "found" ||
+    advertising_intelligence?.status === "FOUND" ||
     media_evidence?.packaging ||
     product.name ||
-    seller.username
+    seller.username ||
+    profile_investigation.rawBio
   );
 
   const status = hasAnyMeaningfulData ? "EVIDENCE_COLLECTED" : "INSUFFICIENT_EVIDENCE";
@@ -383,6 +413,8 @@ export async function verifyInstagramProduct(
   return {
     evidence,
     meta_ad_evidence,
+    advertising_intelligence,
+    profile_investigation,
     website_evidence,
     media_evidence,
     image_cross_check,
@@ -398,6 +430,20 @@ export async function verifyInstagramProduct(
     status,
     failure_reason,
   };
+}
+
+/**
+ * Investigates a public Instagram profile as a dedicated workflow.
+ */
+export async function verifyInstagramProfile(
+  profileUrlOrUsername: string,
+  contextText?: string,
+): Promise<VerificationResult> {
+  const isUrl = profileUrlOrUsername.startsWith("http");
+  const cleanUsername = isUrl ? null : profileUrlOrUsername.replace(/^@+/, "");
+  const profileUrl = isUrl ? profileUrlOrUsername : `https://www.instagram.com/${cleanUsername}/`;
+
+  return verifyInstagramProduct(profileUrl, contextText);
 }
 
 /**

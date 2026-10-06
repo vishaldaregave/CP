@@ -1,7 +1,24 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { VerificationResult, RiskLevel, SourceType, RiskFactor } from "./types.ts";
+import type {
+  VerificationResult,
+  RiskLevel,
+  SourceType,
+  RiskFactor,
+  AdvertisingIntelligence,
+  AdEvidenceItem,
+  AdvertiserIdentityMatchRating,
+  ProfileInvestigation,
+  BioClaim,
+  BioClaimVerificationResult,
+  ExternalProfileLink,
+  ProfileHighlight,
+  ProfilePostSample,
+  ProfileEvidenceItem,
+  ProfileScoreDimension,
+} from "./types.ts";
 import type { VerificationReportData, GeneratedReport } from "./reportTypes.ts";
+import { buildProfileInvestigationFromEvidence } from "./profileInvestigator.ts";
 
 /**
  * Escapes dynamic string for safe HTML injection.
@@ -28,13 +45,13 @@ function formatProvenanceBadge(source: SourceType | string): string {
   let bg = "#f1f5f9";
   let color = "#475569";
 
-  if (s.includes("INSTAGRAM")) {
+  if (s.includes("INSTAGRAM") || s.includes("BIO")) {
     bg = "#fdf2f8";
     color = "#db2777";
-  } else if (s.includes("META") || s.includes("AD")) {
+  } else if (s.includes("META") || s.includes("AD") || s.includes("APIFY")) {
     bg = "#eff6ff";
     color = "#2563eb";
-  } else if (s.includes("WEBSITE")) {
+  } else if (s.includes("WEBSITE") || s.includes("WEB")) {
     bg = "#ecfdf5";
     color = "#059669";
   } else if (s.includes("OCR") || s.includes("PACKAGING") || s.includes("PRODUCT IMAGE")) {
@@ -43,6 +60,9 @@ function formatProvenanceBadge(source: SourceType | string): string {
   } else if (s.includes("RECEIVED") || s.includes("POST PURCHASE")) {
     bg = "#fae8ff";
     color = "#9333ea";
+  } else if (s.includes("LINK") || s.includes("GITHUB") || s.includes("LINKEDIN")) {
+    bg = "#e0e7ff";
+    color = "#4338ca";
   }
 
   return `<span class="source-tag" style="background: ${bg}; color: ${color}; font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 600; text-transform: uppercase;">${escapeHtml(s)}</span>`;
@@ -51,13 +71,57 @@ function formatProvenanceBadge(source: SourceType | string): string {
 function formatResultBadge(rating: string): string {
   switch (rating) {
     case "MATCH":
-      return `<span class="badge badge-success">✓ MATCH</span>`;
+    case "SUPPORTED":
+    case "CONSISTENT":
+      return `<span class="badge badge-success">✓ ${escapeHtml(rating)}</span>`;
     case "PARTIAL":
-      return `<span class="badge badge-warning">~ PARTIAL</span>`;
+    case "PARTIAL_MATCH":
+      return `<span class="badge badge-warning">~ ${escapeHtml(rating)}</span>`;
     case "MISMATCH":
-      return `<span class="badge badge-danger">✕ MISMATCH</span>`;
+    case "CONTRADICTED":
+    case "INCONSISTENT":
+      return `<span class="badge badge-danger">✕ ${escapeHtml(rating)}</span>`;
+    case "OBSERVED":
+      return `<span class="badge badge-info" style="background: #e0f2fe; color: #0369a1;">👁 OBSERVED</span>`;
+    case "UNVERIFIED":
+      return `<span class="badge badge-neutral" style="background: #f1f5f9; color: #475569;">⚪ UNVERIFIED</span>`;
+    case "DOMAIN_ANOMALY":
+      return `<span class="badge badge-warning">⚠️ DOMAIN ANOMALY</span>`;
+    case "CONTENT_AD_MATCH":
+      return `<span class="badge badge-success">✓ CONTENT MATCH</span>`;
+    case "PROFILE_AD_MISMATCH":
+      return `<span class="badge badge-danger">⚠️ PROFILE MISMATCH</span>`;
     default:
-      return `<span class="badge badge-neutral">— UNKNOWN</span>`;
+      return `<span class="badge badge-neutral">— ${escapeHtml(rating || "UNKNOWN")}</span>`;
+  }
+}
+
+function formatAdvertiserBadge(rating?: AdvertiserIdentityMatchRating | string): string {
+  switch (rating) {
+    case "MATCH":
+      return `<span class="badge badge-success">🟢 MATCH</span>`;
+    case "PARTIAL_MATCH":
+    case "PARTIAL":
+      return `<span class="badge badge-warning">🟠 PARTIAL</span>`;
+    case "MISMATCH":
+      return `<span class="badge badge-danger">🔴 MISMATCH</span>`;
+    default:
+      return `<span class="badge badge-neutral">⚪ UNKNOWN</span>`;
+  }
+}
+
+function formatConsistencyLevelBadge(level?: string): string {
+  switch (level) {
+    case "HIGH":
+      return `<span class="badge badge-success">🟢 HIGH</span>`;
+    case "MEDIUM":
+      return `<span class="badge badge-warning">🟠 MEDIUM</span>`;
+    case "LOW":
+      return `<span class="badge badge-danger">🔴 LOW</span>`;
+    case "DOMAIN_ANOMALY":
+      return `<span class="badge badge-warning">⚠️ ANOMALY</span>`;
+    default:
+      return `<span class="badge badge-neutral">⚪ UNKNOWN</span>`;
   }
 }
 
@@ -91,7 +155,7 @@ export function buildReportData(result: VerificationResult): VerificationReportD
     ocr: "AVAILABLE" | "UNAVAILABLE";
   } = {
     instagram: (result.evidence?.post?.caption || result.evidence?.account?.username) ? "AVAILABLE" : "UNAVAILABLE",
-    meta_ad: (result.meta_ad_evidence && result.meta_ad_evidence.status === "found") ? "AVAILABLE" : "UNAVAILABLE",
+    meta_ad: ((result.meta_ad_evidence && result.meta_ad_evidence.status === "found") || (result.advertising_intelligence && result.advertising_intelligence.status === "FOUND")) ? "AVAILABLE" : "UNAVAILABLE",
     website: (result.website_evidence && result.website_evidence.status === "accessible") ? "AVAILABLE" : "UNAVAILABLE",
     product_image: (result.evidence?.media && result.evidence.media.length > 0) ? "AVAILABLE" : "UNAVAILABLE",
     ocr: (result.media_evidence?.ocr && result.media_evidence.ocr.status !== "failed" && result.media_evidence.ocr.text.length > 0) ? "AVAILABLE" : "UNAVAILABLE",
@@ -106,8 +170,8 @@ export function buildReportData(result: VerificationResult): VerificationReportD
   };
 
   const seller = {
-    username: result.seller?.username || null,
-    name: result.seller?.name || result.website_evidence?.company.name || null,
+    username: result.seller?.username || result.evidence?.account?.username || null,
+    name: result.seller?.name || result.evidence?.account?.display_name || result.website_evidence?.company.name || null,
     website: result.seller?.website || result.website_evidence?.url || null,
     contact: result.seller?.contact || result.website_evidence?.company.email || result.website_evidence?.company.phone || null,
     address: result.website_evidence?.company.address || result.media_evidence?.packaging?.manufacturer.address || null,
@@ -130,9 +194,9 @@ export function buildReportData(result: VerificationResult): VerificationReportD
     },
     meta_ad: {
       available: source_overview.meta_ad === "AVAILABLE",
-      status: result.meta_ad_evidence?.status || "unavailable",
+      status: result.meta_ad_evidence?.status || (result.advertising_intelligence?.status === "FOUND" ? "found" : "unavailable"),
       library_id: result.meta_ad_evidence?.libraryId || null,
-      advertiser: result.meta_ad_evidence?.advertiserName || null,
+      advertiser: result.meta_ad_evidence?.advertiserName || result.advertising_intelligence?.advertiserIdentity || null,
     },
     website: {
       available: source_overview.website === "AVAILABLE",
@@ -156,14 +220,14 @@ export function buildReportData(result: VerificationResult): VerificationReportD
   const executive_finding =
     result.risk?.explanation ||
     result.trust_matrix?.summary_explanation ||
-    "Multi-source verification completed based on available listing and packaging evidence.";
+    "Multi-source investigation completed based on available public profile and evidence sources.";
 
   const consistency_matrix = result.trust_matrix?.fields || {};
   const trust_signals = result.trust_matrix?.trust_signals || result.risk?.positive_signals.map((s) => ({ signal: s, severity: "positive" as const, sources: ["instagram" as const] })) || [];
   const risk_signals = result.trust_matrix?.risk_signals || result.risk?.risk_signals.map((s) => ({ signal: s, severity: "high" as const, sources: ["instagram" as const] })) || [];
   const missing_information = result.risk?.missing_information || result.trust_matrix?.missing_information || [];
   const traceable_conclusions = result.trust_matrix?.traceable_conclusions || [];
-  const recommendation = result.risk?.recommendation || "Verify seller before purchasing.";
+  const recommendation = result.risk?.recommendation || "Verify seller before purchasing or engaging in transactions.";
   const disclaimer = "This verification is an evidence-based assessment and is not a guarantee of product authenticity, seller legitimacy, or legal compliance.";
 
   return {
@@ -177,9 +241,12 @@ export function buildReportData(result: VerificationResult): VerificationReportD
     seller,
     risk: {
       level: result.risk?.risk_level || "UNKNOWN",
-      confidence: result.risk?.confidence || 0,
+      confidence: result.risk?.confidence ?? 0,
     },
     evidence,
+    meta_ad_details: result.meta_ad_evidence || null,
+    advertising_intelligence: result.advertising_intelligence || null,
+    ad_claim_analysis: result.ad_claim_analysis || null,
     source_overview,
     executive_finding,
     consistency_matrix,
@@ -193,45 +260,150 @@ export function buildReportData(result: VerificationResult): VerificationReportD
 }
 
 /**
- * Builds self-contained HTML report with all 16 standardized sections and provenance tracking.
+ * Builds self-contained HTML report with all 18 standardized sections in exact required order.
  */
 export function buildReportHtml(data: VerificationReportData, rawResult: VerificationResult): string {
+  // Ensure profile investigation is populated
+  const profileInv: ProfileInvestigation =
+    rawResult.profile_investigation ||
+    buildProfileInvestigationFromEvidence(
+      rawResult.evidence,
+      rawResult.meta_ad_evidence,
+      rawResult.website_evidence,
+      rawResult.advertising_intelligence,
+      rawResult.seller_identity_graph,
+    );
+
   const packaging = rawResult.media_evidence?.packaging;
   const sellerGraph = rawResult.seller_identity_graph;
   const productConsistency = rawResult.product_consistency;
-  const timeline = rawResult.evidence_timeline;
-  const postPurchase = rawResult.post_purchase_comparison;
-  const riskFactors = rawResult.risk?.risk_factors || [];
+  const adIntel = rawResult.advertising_intelligence;
 
-  // Build consistency table rows
-  const matrixKeys = ["brand", "product_name", "price", "pack_size", "seller", "manufacturer", "website", "contact"];
-  const matrixRows = matrixKeys
-    .map((key) => {
-      const field = data.consistency_matrix[key];
-      const fieldLabel = key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
-      const instaVal = field?.valuesBySource?.instagram || (key === "brand" ? data.product.brand : key === "product_name" ? data.product.name : key === "price" ? data.product.price : key === "seller" ? data.seller.username : null);
-      const metaVal = field?.valuesBySource?.meta_ad || (key === "brand" ? rawResult.meta_ad_evidence?.linkTitle : key === "product_name" ? rawResult.meta_ad_evidence?.linkTitle : key === "seller" ? rawResult.meta_ad_evidence?.advertiserName : null);
-      const webVal = field?.valuesBySource?.website || (key === "brand" ? rawResult.website_evidence?.product.brand : key === "product_name" ? rawResult.website_evidence?.product.name : key === "price" ? rawResult.website_evidence?.product.price : key === "seller" ? rawResult.website_evidence?.company.name : null);
-      const imgVal = field?.valuesBySource?.product_image || (key === "brand" ? packaging?.product.brand : key === "product_name" ? packaging?.product.name : key === "price" ? packaging?.product.mrp : key === "manufacturer" ? packaging?.manufacturer.name : null);
-      const rating = field?.result || (instaVal && (webVal || imgVal || metaVal) ? "MATCH" : "UNKNOWN");
+  // 1. Investigation Summary HTML
+  const overallTrustScore = profileInv.overallScore;
+  const confidenceScore = data.risk?.confidence ?? profileInv.sidePanelData.confidence;
+  const coveragePercent = rawResult.risk?.evidence_coverage ?? profileInv.sidePanelData.evidenceCoverage;
+  const finalRiskLevel = data.risk?.level ?? profileInv.sidePanelData.riskLevel;
 
-      return `
-        <tr>
-          <td class="font-semibold">${escapeHtml(fieldLabel)}</td>
-          <td>${escapeHtml(instaVal || "—")}</td>
-          <td>${escapeHtml(metaVal || "—")}</td>
-          <td>${escapeHtml(webVal || "—")}</td>
-          <td>${escapeHtml(imgVal || "—")}</td>
-          <td>${formatResultBadge(rating)}</td>
-        </tr>
-      `;
-    })
-    .join("");
+  // 2. Profile Overview HTML
+  const profileUsername = profileInv.username ? `@${profileInv.username}` : (data.seller.username ? `@${data.seller.username}` : "@unknown");
+  const profileDisplayName = profileInv.displayName || data.seller.name || "Not specified";
+  const profileVerified = profileInv.verifiedStatus;
+  const followerDisplay = profileInv.followerCount !== null ? profileInv.followerCount.toLocaleString() : "Public / Unlisted";
+  const postCountDisplay = profileInv.postCount !== null ? profileInv.postCount.toString() : `${profileInv.posts.length} sampled`;
 
-  // Seller Identity Graph HTML
-  let sellerGraphHtml = "";
+  const productNameDisplay = data.product.name ? escapeHtml(data.product.name) : "Not available";
+  const brandNameDisplay = data.product.brand ? escapeHtml(data.product.brand) : "Unspecified";
+
+  // 3. Raw Bio HTML
+  const rawBioHtml = profileInv.rawBio
+    ? `<div class="raw-bio-box" style="white-space: pre-wrap; font-family: monospace; background: #0f172a; color: #38bdf8; padding: 16px 20px; border-radius: 8px; font-size: 14px; line-height: 1.6; border: 1px solid #1e293b;">${escapeHtml(profileInv.rawBio)}</div>`
+    : `<div class="empty-text">No bio text publicly visible on this profile.</div>`;
+
+  // 4. Bio Claim Extraction HTML
+  let bioClaimsHtml = "";
+  if (profileInv.profileClaims.length > 0) {
+    bioClaimsHtml = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Evidence ID</th>
+            <th>Claim Type</th>
+            <th>Observed Bio Text</th>
+            <th>Normalized Value</th>
+            <th>Status</th>
+            <th>Confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${profileInv.profileClaims.map((claim: BioClaim) => `
+            <tr>
+              <td style="font-family: monospace; font-weight: 700; color: #db2777;">${escapeHtml(claim.evidenceId)}</td>
+              <td><span class="source-tag" style="background: #fdf2f8; color: #be185d; font-weight: 700;">${escapeHtml(claim.claimType)}</span></td>
+              <td class="font-semibold">"${escapeHtml(claim.claimText)}"</td>
+              <td style="color: #334155;">${escapeHtml(claim.normalizedValue)}</td>
+              <td>${formatResultBadge(claim.status)}</td>
+              <td>${claim.confidence}%</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  } else {
+    bioClaimsHtml = `<div class="empty-text">No distinct structured claims extracted from profile bio.</div>`;
+  }
+
+  // 5. Bio Claim Verification HTML
+  let bioVerificationHtml = "";
+  if (profileInv.claimVerifications.length > 0) {
+    bioVerificationHtml = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Claim</th>
+            <th>Verification Status</th>
+            <th>Sources Checked</th>
+            <th>Corroborating Evidence IDs</th>
+            <th>Explanation</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${profileInv.claimVerifications.map((v: BioClaimVerificationResult) => `
+            <tr>
+              <td>
+                <div style="font-family: monospace; font-size: 11px; color: #db2777;">${escapeHtml(v.claim.evidenceId)}</div>
+                <div class="font-semibold" style="margin-top: 2px;">"${escapeHtml(v.claim.claimText)}"</div>
+              </td>
+              <td>${formatResultBadge(v.status)}</td>
+              <td style="font-size: 12px; color: #475569;">${escapeHtml(v.checkedSources.join(", ") || "Instagram Bio")}</td>
+              <td style="font-family: monospace; font-size: 12px; color: #2563eb;">
+                ${v.matchingEvidenceIds.length > 0 ? v.matchingEvidenceIds.map((id) => escapeHtml(id)).join(", ") : "—"}
+              </td>
+              <td style="font-size: 13px; color: #334155;">${escapeHtml(v.explanation)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  } else {
+    bioVerificationHtml = `<div class="empty-text">No bio claims available for independent multi-source verification.</div>`;
+  }
+
+  // 6. External Links HTML
+  let externalLinksHtml = "";
+  if (profileInv.externalLinks.length > 0) {
+    externalLinksHtml = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Evidence ID</th>
+            <th>Platform</th>
+            <th>Domain</th>
+            <th>Observed URL</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${profileInv.externalLinks.map((link: ExternalProfileLink) => `
+            <tr>
+              <td style="font-family: monospace; font-weight: 700; color: #4338ca;">${escapeHtml(link.evidenceId)}</td>
+              <td><span class="source-tag" style="background: #e0e7ff; color: #4338ca; font-weight: 700;">${escapeHtml(link.platform.toUpperCase())}</span></td>
+              <td class="font-semibold">${escapeHtml(link.domain)}</td>
+              <td><a href="${escapeHtml(link.normalizedUrl)}" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: underline; font-size: 13px;">${escapeHtml(link.originalUrl)}</a></td>
+              <td style="font-size: 12px; color: #64748b;">${escapeHtml(link.source)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  } else {
+    externalLinksHtml = `<div class="empty-text">No external URLs or third-party platform links found on profile.</div>`;
+  }
+
+  // 7. Identity Graph HTML
+  let identityGraphHtml = "";
   if (sellerGraph && sellerGraph.relationships.length > 0) {
-    sellerGraphHtml = `
+    identityGraphHtml = `
       <table class="data-table">
         <thead>
           <tr>
@@ -261,14 +433,89 @@ export function buildReportHtml(data: VerificationReportData, rawResult: Verific
       </div>
     `;
   } else {
-    sellerGraphHtml = `<div class="empty-text">Seller identity graph generated from single profile context.</div>`;
+    identityGraphHtml = `<div class="empty-text">Identity graph compiled based on public Instagram handle.</div>`;
   }
 
-  // Cross-Source Product Consistency HTML
-  let productConsistencyHtml = "";
+  // 8. Highlights Investigation HTML
+  let highlightsHtml = "";
+  const accessibleHls = profileInv.highlights.filter((h) => h.status === "ACCESSIBLE");
+  if (accessibleHls.length > 0) {
+    highlightsHtml = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Evidence ID</th>
+            <th>Highlight Title</th>
+            <th>Category</th>
+            <th>Observed Stories / Content</th>
+            <th>Extracted Entities &amp; Proof</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${accessibleHls.map((hl: ProfileHighlight) => `
+            <tr>
+              <td style="font-family: monospace; font-weight: 700; color: #0284c7;">${escapeHtml(hl.evidenceIds[0] || "EV-HL-001")}</td>
+              <td class="font-semibold">${escapeHtml(hl.title)}</td>
+              <td><span class="source-tag" style="background: #f0fdf4; color: #166534;">${escapeHtml(hl.category)}</span></td>
+              <td style="font-size: 13px; color: #334155;">${escapeHtml(hl.visibleContent.join(", "))}</td>
+              <td style="font-size: 12px; color: #64748b;">${escapeHtml(hl.extractedClaims.join("; ") || "Verified story item")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  } else {
+    highlightsHtml = `<div class="empty-text">Highlights status: <strong>HIGHLIGHTS_UNAVAILABLE</strong> (neutral — private, unarchived, or not publicly exposed).</div>`;
+  }
+
+  // 9. Content Investigation HTML
+  let contentHtml = "";
+  if (profileInv.posts.length > 0) {
+    contentHtml = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Evidence ID</th>
+            <th>Media</th>
+            <th>Caption Snippet</th>
+            <th>Topics &amp; Hashtags</th>
+            <th>Commercial Signals</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${profileInv.posts.map((p: ProfilePostSample) => `
+            <tr>
+              <td style="font-family: monospace; font-weight: 700; color: #2563eb;">${escapeHtml(p.evidenceIds[0])}</td>
+              <td><span class="source-tag" style="background: #f1f5f9; color: #0f172a;">${escapeHtml(p.mediaType.toUpperCase())}</span></td>
+              <td style="font-size: 13px; color: #334155;">${escapeHtml(p.caption ? p.caption.slice(0, 120) + (p.caption.length > 120 ? "..." : "") : "No caption")}</td>
+              <td style="font-size: 12px; color: #475569;">
+                <div><strong>Topics:</strong> ${escapeHtml(p.topics.join(", ") || "lifestyle")}</div>
+                ${p.hashtags.length > 0 ? `<div style="color: #0284c7; margin-top: 2px;">#${escapeHtml(p.hashtags.slice(0, 4).join(" #"))}</div>` : ""}
+              </td>
+              <td style="font-size: 12px; color: #64748b;">${escapeHtml(p.commercialSignals.join(", ") || "None")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  } else {
+    contentHtml = `<div class="empty-text">No public post samples available in this investigation run.</div>`;
+  }
+
+  // 10. Cross-Source Consistency HTML
+  let crossSourceConsistencyHtml = `
+    <div style="margin-bottom: 14px; padding: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
+      <div style="font-weight: 600; font-size: 14px; color: #0f172a;">Content &harr; Bio Consistency: ${formatResultBadge(profileInv.contentBioConsistency.status)}</div>
+      <div style="font-size: 13px; color: #475569; margin-top: 4px;">${escapeHtml(profileInv.contentBioConsistency.explanation)}</div>
+      ${profileInv.contentBioConsistency.matchingTopics.length > 0 ? `
+        <div style="margin-top: 8px; font-size: 12px; color: #166534;"><strong>Matching Topics:</strong> ${escapeHtml(profileInv.contentBioConsistency.matchingTopics.join(", "))}</div>
+      ` : ""}
+    </div>
+  `;
+
   if (productConsistency) {
     const fields = Object.values(productConsistency.fields);
-    productConsistencyHtml = `
+    crossSourceConsistencyHtml += `
       <table class="data-table">
         <thead>
           <tr>
@@ -293,76 +540,256 @@ export function buildReportHtml(data: VerificationReportData, rawResult: Verific
           `).join("")}
         </tbody>
       </table>
-      <div style="margin-top: 12px; font-size: 13px; color: #64748b;">
-        <strong>Consistency Summary:</strong> ${escapeHtml(productConsistency.summary)}
-      </div>
+    `;
+  } else {
+    const matrixKeys = ["brand", "product_name", "price", "pack_size", "seller", "manufacturer", "website", "contact"];
+    const matrixRows = matrixKeys
+      .map((key) => {
+        const field = data.consistency_matrix[key];
+        const fieldLabel = key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+        const instaVal = field?.valuesBySource?.instagram || (key === "brand" ? data.product.brand : key === "product_name" ? data.product.name : key === "price" ? data.product.price : key === "seller" ? data.seller.username : null);
+        const metaVal = field?.valuesBySource?.meta_ad || (key === "brand" ? rawResult.meta_ad_evidence?.linkTitle : key === "product_name" ? rawResult.meta_ad_evidence?.linkTitle : key === "seller" ? rawResult.meta_ad_evidence?.advertiserName : null);
+        const webVal = field?.valuesBySource?.website || (key === "brand" ? rawResult.website_evidence?.product.brand : key === "product_name" ? rawResult.website_evidence?.product.name : key === "price" ? rawResult.website_evidence?.product.price : key === "seller" ? rawResult.website_evidence?.company.name : null);
+        const imgVal = field?.valuesBySource?.product_image || (key === "brand" ? packaging?.product.brand : key === "product_name" ? packaging?.product.name : key === "price" ? packaging?.product.mrp : key === "manufacturer" ? packaging?.manufacturer.name : null);
+        const rating = field?.result || (instaVal && (webVal || imgVal || metaVal) ? "MATCH" : "UNKNOWN");
+
+        return `
+          <tr>
+            <td class="font-semibold">${escapeHtml(fieldLabel)}</td>
+            <td>${escapeHtml(instaVal || "—")}</td>
+            <td>${escapeHtml(metaVal || "—")}</td>
+            <td>${escapeHtml(webVal || "—")}</td>
+            <td>${escapeHtml(imgVal || "—")}</td>
+            <td>${formatResultBadge(rating)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    crossSourceConsistencyHtml += `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Instagram</th>
+            <th>Meta Ad</th>
+            <th>Website</th>
+            <th>Product Image / Packaging</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${matrixRows}
+        </tbody>
+      </table>
     `;
   }
 
-  // Evidence Timeline HTML
-  let timelineHtml = "";
-  if (timeline && timeline.events.length > 0) {
-    timelineHtml = `
-      <div class="timeline-container">
-        ${timeline.events.map((ev) => `
-          <div class="timeline-item">
-            <div class="timeline-badge">${formatProvenanceBadge(ev.source)}</div>
-            <div class="timeline-content">
-              <div class="timeline-header">
-                <span class="timeline-title font-semibold">${escapeHtml(ev.event)}</span>
-                <span class="timeline-time">${escapeHtml(new Date(ev.timestamp).toLocaleDateString())}</span>
-              </div>
-              <div class="timeline-desc">${escapeHtml(ev.description)}</div>
-            </div>
+  // 11. Advertising Intelligence HTML
+  let adTimelineTreeHtml = "";
+  if (adIntel && adIntel.timeline.timelineTree.length > 0) {
+    adTimelineTreeHtml = `
+      <div class="ad-timeline-tree" style="margin-top: 14px; font-family: monospace; background: #0f172a; color: #f8fafc; padding: 16px 20px; border-radius: 8px; font-size: 13px; line-height: 1.6;">
+        ${adIntel.timeline.timelineTree.map((group) => `
+          <div style="margin-bottom: 12px;">
+            <div style="color: #38bdf8; font-weight: bold; font-size: 14px;">📅 ${escapeHtml(group.year)}</div>
+            ${group.entries.map((entry, idx) => {
+              const isLast = idx === group.entries.length - 1;
+              const branch = isLast ? "└──" : "├──";
+              const statusTag = entry.status === "ACTIVE" ? '<span style="color: #4ade80;">[ACTIVE]</span>' : '<span style="color: #94a3b8;">[HISTORICAL]</span>';
+              return `<div style="padding-left: 8px; color: #e2e8f0;">${branch} ${statusTag} <span style="color: #facc15;">${escapeHtml(entry.evidenceId)}</span> Ad observed: ${escapeHtml(entry.snippet || entry.label)} <span style="color: #94a3b8; font-size: 11px;">(${escapeHtml(entry.date)})</span></div>`;
+            }).join("")}
           </div>
         `).join("")}
       </div>
     `;
   } else {
-    timelineHtml = `<div class="empty-text">Timeline events compiled during verification run.</div>`;
+    adTimelineTreeHtml = `<div class="empty-text" style="margin-top: 10px;">Advertising timeline unavailable (no public campaigns observed or history unavailable).</div>`;
   }
 
-  // Risk Factors HTML
-  let riskFactorsHtml = "";
-  if (riskFactors.length > 0) {
-    riskFactorsHtml = `
+  let advertiserIdentitySectionHtml = "";
+  if (adIntel && adIntel.advertiserMatch) {
+    const am = adIntel.advertiserMatch;
+    advertiserIdentitySectionHtml = `
       <table class="data-table">
         <thead>
           <tr>
-            <th>Severity</th>
-            <th>Category</th>
-            <th>Factor / Title</th>
-            <th>Explanation</th>
-            <th>Provenance</th>
+            <th>Source</th>
+            <th>Identifier / Value</th>
+            <th>Match Status</th>
           </tr>
         </thead>
         <tbody>
-          ${riskFactors.map((rf: RiskFactor) => {
-            const sevBadge = rf.severity === "positive"
-              ? `<span class="badge badge-success">POSITIVE</span>`
-              : rf.severity === "low"
-              ? `<span class="badge badge-neutral">LOW</span>`
-              : rf.severity === "medium"
-              ? `<span class="badge badge-warning">MEDIUM</span>`
-              : `<span class="badge badge-danger">HIGH</span>`;
-            return `
-              <tr>
-                <td>${sevBadge}</td>
-                <td><span style="font-size: 11px; font-weight: 700; color: #475569;">${escapeHtml(rf.category)}</span></td>
-                <td class="font-semibold">${escapeHtml(rf.title)}</td>
-                <td style="font-size: 13px; color: #334155;">${escapeHtml(rf.explanation)}</td>
-                <td>${rf.sources.map(formatProvenanceBadge).join(" ")}</td>
-              </tr>
-            `;
-          }).join("")}
+          <tr>
+            <td>${formatProvenanceBadge("instagram")} Instagram Profile</td>
+            <td>@${escapeHtml(am.instagramUsername || "unknown")} (${escapeHtml(am.instagramDisplayName || "No display name")})</td>
+            <td rowspan="3" style="vertical-align: middle; text-align: center;">
+              ${formatAdvertiserBadge(am.rating)}
+              <div style="font-size: 11px; color: #64748b; margin-top: 4px;">${am.confidence}% confidence</div>
+              ${am.evidenceItemId ? `<div style="font-size: 10px; font-family: monospace; color: #2563eb; margin-top: 2px;">${escapeHtml(am.evidenceItemId)}</div>` : ""}
+            </td>
+          </tr>
+          <tr>
+            <td>${formatProvenanceBadge("meta_ad")} Meta Advertiser</td>
+            <td>${escapeHtml(am.metaAdvertiserIdentity || "None")} ${am.metaPageIdentity ? `<span style="font-size: 11px; color: #64748b;">(Page ID: ${escapeHtml(am.metaPageIdentity)})</span>` : ""}</td>
+          </tr>
+          <tr>
+            <td>${formatProvenanceBadge("website")} Destination Storefront</td>
+            <td>${escapeHtml(am.destinationDomain || "No destination domain")}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top: 10px; font-size: 13px; color: #334155;">
+        <strong>Verdict:</strong> ${escapeHtml(am.verdict)}
+      </div>
+    `;
+  }
+
+  let destinationAnalysisHtml = "";
+  if (adIntel && adIntel.destinationAnalysis.domains.length > 0) {
+    destinationAnalysisHtml = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Observed Destination Domain</th>
+            <th>Ad Count</th>
+            <th>Share</th>
+            <th>Consistency Rating</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${adIntel.destinationAnalysis.domains.map((dom) => `
+            <tr>
+              <td class="font-semibold">${escapeHtml(dom.domain)}</td>
+              <td>${dom.count} ad(s)</td>
+              <td>${dom.percentage}%</td>
+              <td>${formatConsistencyLevelBadge(adIntel.destinationAnalysis.domainConsistency)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      ${adIntel.destinationAnalysis.hasDomainAnomaly && adIntel.destinationAnalysis.anomalyDetails ? `
+        <div style="margin-top: 10px; padding: 10px 14px; background: #fffbeb; border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 13px; color: #92400e;">
+          ⚠️ <strong>DOMAIN_ANOMALY:</strong> ${escapeHtml(adIntel.destinationAnalysis.anomalyDetails)}
+        </div>
+      ` : ""}
+    `;
+  } else {
+    destinationAnalysisHtml = `<div class="empty-text">No external destination domains linked in recorded advertising campaigns.</div>`;
+  }
+
+  let creativeHistoryHtml = "";
+  if (adIntel && adIntel.creativeHistory.variations.length > 0) {
+    const ch = adIntel.creativeHistory;
+    creativeHistoryHtml = `
+      <div class="summary-grid" style="margin-bottom: 14px;">
+        <div class="summary-card">
+          <div class="summary-label">Creative Score</div>
+          <div class="summary-value">${ch.creativeConsistencyScore !== null ? `${ch.creativeConsistencyScore} / 100` : "HISTORY_UNAVAILABLE"}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Brand Consistency</div>
+          <div class="summary-value">${formatResultBadge(ch.brandConsistency)}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Product Consistency</div>
+          <div class="summary-value">${formatResultBadge(ch.productConsistency)}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Messaging Consistency</div>
+          <div class="summary-value">${formatResultBadge(ch.messagingConsistency)}</div>
+        </div>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Creative ID</th>
+            <th>Headline / Title</th>
+            <th>Body Text Snippet</th>
+            <th>Observed Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${ch.variations.map((v) => `
+            <tr>
+              <td style="font-family: monospace; font-size: 12px; color: #2563eb;">${escapeHtml(v.creativeId || "AD")}</td>
+              <td class="font-semibold">${escapeHtml(v.headline || "—")}</td>
+              <td style="font-size: 13px; color: #475569;">${escapeHtml(v.bodySnippet || "—")}</td>
+              <td style="font-size: 12px; color: #64748b;">${escapeHtml(v.deliveryDate || "HISTORY_UNAVAILABLE")}</td>
+            </tr>
+          `).join("")}
         </tbody>
       </table>
     `;
   } else {
-    riskFactorsHtml = `<div class="empty-text">Standard multi-source risk assessment completed.</div>`;
+    creativeHistoryHtml = `<div class="empty-text">Creative variations history unavailable for single-ad or unarchived campaigns.</div>`;
   }
 
-  // Trust signals HTML
+  let instaMetaCorrelationHtml = "";
+  if (adIntel && adIntel.instagramCorrelation) {
+    const ic = adIntel.instagramCorrelation;
+    instaMetaCorrelationHtml = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Instagram Post Content</th>
+            <th>Meta Ad Content</th>
+            <th>Correlation Verdict</th>
+            <th>Referenced Evidence IDs</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>${formatProvenanceBadge("instagram")} <span style="font-size: 13px;">${escapeHtml(ic.instagramContent)}</span></td>
+            <td>${formatProvenanceBadge("meta_ad")} <span style="font-size: 13px;">${escapeHtml(ic.metaAdContent)}</span></td>
+            <td>${formatResultBadge(ic.result)}</td>
+            <td style="font-family: monospace; font-size: 12px; color: #2563eb;">
+              ${escapeHtml(ic.instagramEvidenceId || "EV-POST-001")} &harr; ${escapeHtml(ic.adEvidenceId || "EV-AD-001")}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top: 10px; font-size: 13px; color: ${ic.isAnomaly ? "#b91c1c" : "#334155"};">
+        <strong>Correlation Analysis:</strong> ${escapeHtml(ic.explanation)}
+      </div>
+    `;
+  }
+
+  let adEvidenceLedgerHtml = "";
+  if (adIntel && adIntel.evidenceLedger.length > 0) {
+    adEvidenceLedgerHtml = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Evidence ID</th>
+            <th>Source</th>
+            <th>Advertiser</th>
+            <th>Ad ID</th>
+            <th>Status</th>
+            <th>Observed Window</th>
+            <th>Confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${adIntel.evidenceLedger.map((item: AdEvidenceItem) => `
+            <tr>
+              <td style="font-family: monospace; font-weight: 700; color: #2563eb;">${escapeHtml(item.id)}</td>
+              <td>${formatProvenanceBadge(item.source)}</td>
+              <td class="font-semibold">${escapeHtml(item.advertiser)}</td>
+              <td style="font-family: monospace; font-size: 12px;">${escapeHtml(item.adId)}</td>
+              <td><span class="badge ${item.status === "ACTIVE" ? "badge-success" : "badge-neutral"}">${escapeHtml(item.status)}</span></td>
+              <td style="font-size: 12px; color: #475569;">${escapeHtml(item.observed)}</td>
+              <td>${item.confidence}%</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  } else {
+    adEvidenceLedgerHtml = `<div class="empty-text">No discrete advertising evidence items generated for this investigation run.</div>`;
+  }
+
+  // 12. Trust Signals HTML
   const trustSignalsHtml = data.trust_signals.length > 0
     ? data.trust_signals.map((ts) => `
         <div class="signal-item signal-positive" style="margin-bottom: 8px; padding: 10px 14px; background: #f0fdf4; border-left: 3px solid #16a34a; border-radius: 4px;">
@@ -373,95 +800,135 @@ export function buildReportHtml(data: VerificationReportData, rawResult: Verific
       `).join("")
     : `<div class="empty-text">No multi-source trust signals detected.</div>`;
 
-  // Risk signals HTML
+  // 13. Risk Signals HTML
   const riskSignalsHtml = data.risk_signals.length > 0
     ? data.risk_signals.map((rs) => `
-        <div class="signal-item signal-risk signal-risk-${escapeHtml(rs.severity)}" style="margin-bottom: 8px; padding: 10px 14px; background: #fef2f2; border-left: 3px solid #dc2626; border-radius: 4px;">
+        <div class="signal-item signal-risk" style="margin-bottom: 8px; padding: 10px 14px; background: #fef2f2; border-left: 3px solid #dc2626; border-radius: 4px;">
           <div class="signal-title" style="font-weight: 600; color: #991b1b;">⚠️ ${escapeHtml(rs.signal)}</div>
           <div class="signal-sources" style="font-size: 12px; color: #64748b; margin-top: 4px;">Severity: <strong>${escapeHtml(rs.severity.toUpperCase())}</strong> | Sources: ${escapeHtml(rs.sources.join(", "))}</div>
         </div>
       `).join("")
-    : `<div class="empty-text">No risk signals detected based on available evidence.</div>`;
+    : `<div class="empty-text">No high-risk signals detected based on available public evidence.</div>`;
 
-  // Missing info HTML
-  const missingInfoHtml = data.missing_information.length > 0
-    ? `<ul style="padding-left: 20px; font-size: 14px; color: #475569;">${data.missing_information.map((m) => `<li style="margin-bottom: 4px;">${escapeHtml(m)}</li>`).join("")}</ul>`
-    : `<div class="empty-text">All standard verification sources were accessible.</div>`;
+  // 14. Unknown / Unavailable Information HTML
+  const unknownsList = [
+    ...data.missing_information,
+    ...profileInv.sidePanelData.unknowns,
+  ];
+  const uniqueUnknowns = Array.from(new Set(unknownsList));
+  const unknownInfoHtml = uniqueUnknowns.length > 0
+    ? `<ul style="padding-left: 20px; font-size: 14px; color: #475569;">${uniqueUnknowns.map((m) => `<li style="margin-bottom: 4px;">${escapeHtml(m)}</li>`).join("")}</ul>`
+    : `<div class="empty-text">All standard profile evidence sources were accessible.</div>`;
 
-  // Traceable conclusions HTML
-  const traceableHtml = data.traceable_conclusions.length > 0
-    ? data.traceable_conclusions.map((tc) => `
-        <div class="traceable-card" style="margin-bottom: 12px; padding: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
-          <div class="traceable-conclusion font-semibold" style="color: #0f172a; margin-bottom: 6px;">🔍 ${escapeHtml(tc.conclusion)}</div>
-          <div class="traceable-evidence">
-            ${tc.evidence.length > 0
-              ? tc.evidence.map((ev) => `
-                  <div style="font-size: 13px; margin-bottom: 2px;">
-                    ${formatProvenanceBadge(ev.source)} <span style="color: #334155;">${escapeHtml(ev.value)}</span>
-                  </div>
-                `).join("")
-              : `<div class="empty-text">No direct source values recorded</div>`
-            }
-          </div>
-        </div>
-      `).join("")
-    : `<div class="empty-text">Evidence traceability mapping generated based on listing data.</div>`;
+  // 15. Unified Evidence Ledger HTML
+  const unifiedLedgerHtml = `
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Evidence ID</th>
+          <th>Source Type</th>
+          <th>Observed Text / Claim</th>
+          <th>Status</th>
+          <th>Confidence</th>
+          <th>Corroborating IDs</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${profileInv.evidence.map((item: ProfileEvidenceItem) => `
+          <tr>
+            <td style="font-family: monospace; font-weight: 700; color: #2563eb;">${escapeHtml(item.id)}</td>
+            <td>${formatProvenanceBadge(item.sourceType)}</td>
+            <td>
+              <div class="font-semibold">${escapeHtml(item.observedText)}</div>
+              ${item.claim ? `<div style="font-size: 12px; color: #64748b; margin-top: 2px;">Claim: ${escapeHtml(item.claim)}</div>` : ""}
+            </td>
+            <td>${formatResultBadge(item.status)}</td>
+            <td>${item.confidence}%</td>
+            <td style="font-family: monospace; font-size: 12px; color: #0284c7;">
+              ${item.supportingEvidenceIds.length > 0 ? item.supportingEvidenceIds.map((id) => escapeHtml(id)).join(", ") : "—"}
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
 
-  // Post-Purchase Section HTML (If available)
-  let postPurchaseHtml = "";
-  if (postPurchase) {
-    postPurchaseHtml = `
-      <div class="section" id="section-post-purchase" style="background: #faf5ff;">
-        <div class="section-title">14. Post-Purchase Received Product Verification</div>
-        <div class="summary-grid" style="margin-bottom: 16px;">
-          <div class="summary-card">
-            <div class="summary-label">Delivered Item Verdict</div>
-            <div class="summary-value">${formatResultBadge(postPurchase.overallRating)}</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-label">Delivered Confidence</div>
-            <div class="summary-value">${postPurchase.updatedConfidence}%</div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-label">Discrepancies Detected</div>
-            <div class="summary-value">${postPurchase.mismatchesDetected.length}</div>
-          </div>
-        </div>
-        <table class="data-table">
-          <thead>
+  // 16. Score Calculation HTML (Answer "Why did Veriqoo give this score?")
+  const scoreCalculationHtml = `
+    <div style="margin-bottom: 16px;">
+      <h3 style="font-size: 15px; color: #0f172a; margin-bottom: 8px;">Why did Veriqoo give this score?</h3>
+      <div style="font-size: 13px; color: #475569; margin-bottom: 12px;">Every score contribution is traceable to discrete evidence items:</div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Scoring Dimension</th>
+            <th>Score Awarded</th>
+            <th>Max Points</th>
+            <th>Referenced Evidence IDs</th>
+            <th>Explanation</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${profileInv.dimensions.map((dim: ProfileScoreDimension) => `
             <tr>
-              <th>Field</th>
-              <th>Advertised Value</th>
-              <th>Received Physical Value</th>
-              <th>Match Status</th>
-              <th>Explanation</th>
+              <td class="font-semibold">${escapeHtml(dim.name)}</td>
+              <td style="font-weight: 700; color: ${dim.earnedScore > 0 ? "#16a34a" : "#64748b"};">+${dim.earnedScore}</td>
+              <td style="color: #64748b;">${dim.maxScore}</td>
+              <td style="font-family: monospace; font-size: 12px; color: #2563eb;">
+                ${dim.evidenceIds.length > 0 ? dim.evidenceIds.map((id) => escapeHtml(id)).join(", ") : `<span style="color: #94a3b8;">None (0)</span>`}
+              </td>
+              <td style="font-size: 13px; color: #334155;">${escapeHtml(dim.explanation)}</td>
             </tr>
-          </thead>
-          <tbody>
-            ${Object.values(postPurchase.fields).map((f) => `
-              <tr>
-                <td class="font-semibold">${escapeHtml(f.field.toUpperCase())}</td>
-                <td>${formatProvenanceBadge("instagram")} ${escapeHtml(f.advertised || "N/A")}</td>
-                <td>${formatProvenanceBadge("received_product")} ${escapeHtml(f.received || "N/A")}</td>
-                <td>${formatResultBadge(f.rating)}</td>
-                <td style="font-size: 13px; color: #475569;">${escapeHtml(f.explanation)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
-    `;
-  }
+          `).join("")}
+          <tr style="background: #f8fafc; font-weight: 700;">
+            <td>Total Verified Trust Score</td>
+            <td style="color: #0284c7; font-size: 15px;">${overallTrustScore}</td>
+            <td>100</td>
+            <td colspan="2" style="font-size: 13px; color: #334155;">Final Trust Rating: <strong>${overallTrustScore} / 100</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
 
-  const productNameDisplay = data.product.name ? escapeHtml(data.product.name) : "Not available";
-  const brandNameDisplay = data.product.brand ? escapeHtml(data.product.brand) : "Unspecified";
+  // 17. Final Risk Assessment HTML
+  const finalRiskAssessmentHtml = `
+    <div class="summary-grid" style="margin-bottom: 14px;">
+      <div class="summary-card">
+        <div class="summary-label">Final Risk Verdict</div>
+        <div class="summary-value">${formatRiskBadge(finalRiskLevel)}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Trust Score</div>
+        <div class="summary-value">${overallTrustScore} / 100</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Confidence</div>
+        <div class="summary-value">${confidenceScore}%</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Evidence Coverage</div>
+        <div class="summary-value">${coveragePercent}%</div>
+      </div>
+    </div>
+    <div style="font-size: 14px; font-weight: 600; color: #0f172a; line-height: 1.6;">
+      ${escapeHtml(data.recommendation)}
+    </div>
+  `;
+
+  // 18. Investigation Limitations HTML
+  const limitationsHtml = `
+    <div style="font-size: 12px; color: #64748b; line-height: 1.6;">
+      ${escapeHtml(data.disclaimer)} Veriqoo evaluates public profile signals, bio claims, external links, bounded content samples, and advertising records. Unknown or unverified information does not constitute fraud or scam activity. No automated assessment should replace due diligence.
+    </div>
+  `;
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Veriqoo Multi-Source Evidence Report - ${escapeHtml(data.report_id)}</title>
+  <title>Veriqoo Deep Profile Investigation - ${escapeHtml(profileUsername)}</title>
   <style>
     :root {
       --bg: #f8fafc;
@@ -483,14 +950,78 @@ export function buildReportHtml(data: VerificationReportData, rawResult: Verific
       line-height: 1.6;
       padding: 32px 16px;
     }
-    .container {
-      max-width: 960px;
+    .layout-wrapper {
+      max-width: 1280px;
       margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 24px;
+      align-items: start;
+    }
+    @media (max-width: 960px) {
+      .layout-wrapper {
+        grid-template-columns: 1fr;
+      }
+    }
+    .container {
       background: var(--card-bg);
       border-radius: 12px;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
       border: 1px solid var(--border);
       overflow: hidden;
+    }
+    .side-panel {
+      position: sticky;
+      top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .side-panel-card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+    }
+    .side-panel-header {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #0f172a;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .side-stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      margin-bottom: 10px;
+      color: #334155;
+    }
+    .side-label {
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .side-panel-btn {
+      display: block;
+      width: 100%;
+      padding: 8px 12px;
+      background: #0284c7;
+      color: #ffffff;
+      text-align: center;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: background 0.2s;
+      margin-top: 6px;
+    }
+    .side-panel-btn:hover {
+      background: #0369a1;
     }
     .header {
       padding: 28px 32px;
@@ -528,25 +1059,34 @@ export function buildReportHtml(data: VerificationReportData, rawResult: Verific
       color: var(--text-muted);
       margin-bottom: 16px;
     }
+    .subsection-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #334155;
+      margin-top: 18px;
+      margin-bottom: 10px;
+    }
     .summary-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
     }
     .summary-card {
       background: #f1f5f9;
       border-radius: 8px;
-      padding: 14px 16px;
+      padding: 12px 14px;
       border: 1px solid #e2e8f0;
     }
     .summary-label {
-      font-size: 12px;
+      font-size: 11px;
       color: var(--text-muted);
       text-transform: uppercase;
       font-weight: 600;
     }
     .summary-value {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 600;
       color: var(--text);
       margin-top: 4px;
@@ -577,10 +1117,10 @@ export function buildReportHtml(data: VerificationReportData, rawResult: Verific
     .data-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 14px;
+      font-size: 13px;
     }
     .data-table th, .data-table td {
-      padding: 10px 14px;
+      padding: 9px 12px;
       text-align: left;
       border-bottom: 1px solid var(--border);
     }
@@ -588,315 +1128,334 @@ export function buildReportHtml(data: VerificationReportData, rawResult: Verific
       background: #f8fafc;
       color: var(--text-muted);
       font-weight: 600;
-      font-size: 12px;
+      font-size: 11px;
       text-transform: uppercase;
     }
     .font-semibold { font-weight: 600; }
     .empty-text { font-size: 13px; color: var(--text-muted); font-style: italic; }
-
-    /* Timeline styling */
-    .timeline-container {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      padding-left: 8px;
-    }
-    .timeline-item {
-      display: flex;
-      gap: 14px;
-      align-items: flex-start;
-      border-left: 2px solid #e2e8f0;
-      padding-left: 14px;
-      position: relative;
-    }
-    .timeline-badge {
-      min-width: 110px;
-    }
-    .timeline-content {
-      flex: 1;
-    }
-    .timeline-header {
-      display: flex;
-      justify-content: space-between;
-      gap: 8px;
-      font-size: 14px;
-    }
-    .timeline-time {
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-    .timeline-desc {
-      font-size: 13px;
-      color: #475569;
-      margin-top: 2px;
-    }
   </style>
 </head>
 <body>
-  <div class="container">
-    <!-- Header -->
-    <div class="header">
-      <div class="header-top">
-        <div class="header-title">🛡️ VERIQOO EVIDENCE REPORT</div>
-        <div class="report-meta">ID: ${escapeHtml(data.report_id)} | Generated: ${escapeHtml(new Date(data.generated_at).toLocaleString())}</div>
-      </div>
-    </div>
-
-    <!-- 1. Executive Summary -->
-    <div class="section" id="section-executive-summary">
-      <div class="section-title">1. Executive Summary &amp; Executive Finding</div>
-      <div class="summary-grid">
-        <div class="summary-card">
-          <div class="summary-label">Seller Account</div>
-          <div class="summary-value">${escapeHtml(data.seller.username ? `@${data.seller.username}` : data.seller.name || "N/A")}</div>
-        </div>
-        <div class="summary-card">
-          <div class="summary-label">Product Name</div>
-          <div class="summary-value">${productNameDisplay}</div>
-        </div>
-        <div class="summary-card">
-          <div class="summary-label">Risk Level</div>
-          <div class="summary-value">${formatRiskBadge(data.risk.level)}</div>
-        </div>
-        <div class="summary-card">
-          <div class="summary-label">Evidence Coverage</div>
-          <div class="summary-value">${rawResult.risk?.evidence_coverage ?? 75}%</div>
+  <div class="layout-wrapper">
+    <div class="container">
+      <!-- Header -->
+      <div class="header">
+        <div class="header-top">
+          <div class="header-title">🛡️ VERIQOO DEEP PROFILE INVESTIGATION</div>
+          <div class="report-meta">ID: ${escapeHtml(data.report_id)} | Generated: ${escapeHtml(new Date(data.generated_at).toLocaleString())}</div>
         </div>
       </div>
-      <div style="margin-top: 14px; font-size: 14px; color: #334155; line-height: 1.5;">
-        <strong>Executive Finding:</strong> ${escapeHtml(data.executive_finding)}
+
+      <!-- 1. Investigation Summary -->
+      <div class="section" id="section-investigation-summary">
+        <div class="section-title">1. Investigation Summary &amp; Executive Finding</div>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="summary-label">Target Profile</div>
+            <div class="summary-value">${escapeHtml(profileUsername)}</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Trust Score</div>
+            <div class="summary-value" style="color: #0284c7; font-size: 18px;">${overallTrustScore} / 100</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Risk Assessment</div>
+            <div class="summary-value">${formatRiskBadge(finalRiskLevel)}</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Confidence</div>
+            <div class="summary-value">${confidenceScore}%</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Evidence Coverage</div>
+            <div class="summary-value">${coveragePercent}%</div>
+          </div>
+        </div>
+        <div style="margin-top: 14px; font-size: 14px; color: #334155; line-height: 1.5;">
+          <strong>Executive Finding:</strong> ${escapeHtml(data.executive_finding)}
+        </div>
       </div>
-    </div>
 
-    <!-- 2. Risk Assessment -->
-    <div class="section" id="section-risk-assessment">
-      <div class="section-title">2. Risk Assessment</div>
-      <div class="summary-grid">
-        <div class="summary-card">
-          <div class="summary-label">Risk Rating</div>
-          <div class="summary-value">${formatRiskBadge(data.risk.level)}</div>
-        </div>
-        <div class="summary-card">
-          <div class="summary-label">Risk Score</div>
-          <div class="summary-value">${rawResult.risk?.score ?? 30} / 100</div>
-        </div>
-        <div class="summary-card">
-          <div class="summary-label">Confidence</div>
-          <div class="summary-value">${data.risk.confidence}%</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 3. Evidence Coverage / Source Overview -->
-    <div class="section" id="section-evidence-coverage">
-      <div class="section-title">3. Evidence Coverage &amp; Source Overview</div>
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Investigation Source</th>
-            <th>Status</th>
-            <th>Details</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>${formatProvenanceBadge("instagram")} Instagram Profile & Post</td>
-            <td><span class="badge badge-success">AVAILABLE</span></td>
-            <td>Caption length: ${rawResult.evidence?.post?.caption?.length || 0} chars, Media count: ${rawResult.evidence?.media?.length || 0}</td>
-          </tr>
-          <tr>
-            <td>${formatProvenanceBadge("meta_ad")} Meta Ad Library</td>
-            <td>${rawResult.meta_ad_evidence?.status === "found" ? `<span class="badge badge-success">FOUND</span>` : `<span class="badge badge-neutral">${rawResult.meta_ad_evidence?.status?.toUpperCase() || "UNAVAILABLE"}</span>`}</td>
-            <td>${escapeHtml(rawResult.meta_ad_evidence?.limitation || `Queried query terms: ${rawResult.meta_ad_evidence?.queryTerms?.join(", ") || "seller"}`)}</td>
-          </tr>
-          <tr>
-            <td>${formatProvenanceBadge("website")} External Web Store</td>
-            <td>${rawResult.website_evidence?.status === "accessible" ? `<span class="badge badge-success">ACCESSIBLE</span>` : `<span class="badge badge-neutral">UNAVAILABLE</span>`}</td>
-            <td>${escapeHtml(rawResult.website_evidence?.domain || "No independent storefront detected")}</td>
-          </tr>
-          <tr>
-            <td>${formatProvenanceBadge("ocr")} Media & Packaging OCR</td>
-            <td>${rawResult.media_evidence?.ocr?.status === "success" || rawResult.media_evidence?.ocr?.status === "partial" ? `<span class="badge badge-success">ANALYZED</span>` : `<span class="badge badge-neutral">UNAVAILABLE</span>`}</td>
-            <td>Extracted ${rawResult.media_evidence?.ocr?.text?.length || 0} chars of visible package text</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- 4. Product & Seller Information -->
-    <div class="section" id="section-product-seller">
-      <div class="section-title">4. Product &amp; Seller Information</div>
-      <table class="data-table">
-        <tbody>
-          <tr><td class="font-semibold" style="width: 200px;">Product Name</td><td>${productNameDisplay}</td></tr>
-          <tr><td class="font-semibold">Brand</td><td>${brandNameDisplay}</td></tr>
-          <tr><td class="font-semibold">Seller Account</td><td>@${escapeHtml(data.seller.username || "unknown")}</td></tr>
-          <tr><td class="font-semibold">Seller Name / Entity</td><td>${escapeHtml(data.seller.name || "N/A")}</td></tr>
-          <tr><td class="font-semibold">Website Store URL</td><td>${escapeHtml(data.seller.website || "None")}</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- 5. Seller Identity Graph -->
-    <div class="section" id="section-seller-identity">
-      <div class="section-title">5. Seller Identity Graph</div>
-      ${sellerGraphHtml}
-    </div>
-
-    <!-- 6. Instagram Evidence -->
-    <div class="section" id="section-instagram-evidence">
-      <div class="section-title">6. Instagram Evidence</div>
-      <table class="data-table">
-        <tbody>
-          <tr><td class="font-semibold" style="width: 200px;">Username</td><td>@${escapeHtml(data.seller.username || "unknown")}</td></tr>
-          <tr><td class="font-semibold">Post Caption</td><td style="font-size: 13px; color: #334155;">${escapeHtml(data.evidence.instagram.caption || "No caption text")}</td></tr>
-          <tr><td class="font-semibold">External Links</td><td>${data.evidence.instagram.external_links.map((l) => escapeHtml(l)).join(", ") || "None"}</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- 7. Meta Ad Library Evidence -->
-    <div class="section" id="section-meta-evidence">
-      <div class="section-title">7. Meta Ad Library Evidence</div>
-      <table class="data-table">
-        <tbody>
-          <tr><td class="font-semibold" style="width: 200px;">Status</td><td>${escapeHtml(rawResult.meta_ad_evidence?.status?.toUpperCase() || "UNAVAILABLE")}</td></tr>
-          <tr><td class="font-semibold">Advertiser Name</td><td>${escapeHtml(rawResult.meta_ad_evidence?.advertiserName || "N/A")}</td></tr>
-          <tr><td class="font-semibold">Ad Count</td><td>${rawResult.meta_ad_evidence?.ads?.length || 0} active campaign(s)</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- 8. Website Evidence -->
-    <div class="section" id="section-website-evidence">
-      <div class="section-title">8. Website Evidence</div>
-      <table class="data-table">
-        <tbody>
-          <tr><td class="font-semibold" style="width: 200px;">Domain</td><td>${escapeHtml(rawResult.website_evidence?.domain || "N/A")}</td></tr>
-          <tr><td class="font-semibold">Company Name</td><td>${escapeHtml(rawResult.website_evidence?.company?.name || "N/A")}</td></tr>
-          <tr><td class="font-semibold">Contact Info</td><td>${escapeHtml(rawResult.website_evidence?.company?.phone || rawResult.website_evidence?.company?.email || "None listed")}</td></tr>
-          <tr><td class="font-semibold">Policies Found</td><td>${data.evidence.website.policies_found.join(", ") || "None"}</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- 9. Product Evidence -->
-    <div class="section" id="section-product-evidence">
-      <div class="section-title">9. Product Evidence</div>
-      <table class="data-table">
-        <tbody>
-          <tr><td class="font-semibold" style="width: 200px;">Product Name</td><td>${productNameDisplay}</td></tr>
-          <tr><td class="font-semibold">Brand</td><td>${brandNameDisplay}</td></tr>
-          <tr><td class="font-semibold">Category</td><td>${escapeHtml(data.product.category || "General Merchandise")}</td></tr>
-          <tr><td class="font-semibold">Listed Price</td><td>${escapeHtml(data.product.price || "N/A")}</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- 10. OCR / Packaging Extraction -->
-    <div class="section" id="section-ocr-packaging">
-      <div class="section-title">10. OCR / Packaging Extraction</div>
-      <table class="data-table">
-        <tbody>
-          <tr><td class="font-semibold" style="width: 200px;">OCR Status</td><td>${escapeHtml(rawResult.media_evidence?.ocr?.status || "None")} (${rawResult.media_evidence?.ocr?.confidence || 0}% confidence)</td></tr>
-          <tr><td class="font-semibold">Extracted Text</td><td style="font-size: 13px; font-family: monospace; color: #475569;">${escapeHtml(rawResult.media_evidence?.ocr?.text?.slice(0, 300) || "No visual text extracted")}</td></tr>
-          <tr><td class="font-semibold">Extracted MRP</td><td>${escapeHtml(packaging?.product?.mrp || "N/A")}</td></tr>
-          <tr><td class="font-semibold">Regulatory Licenses</td><td>${packaging?.regulatory?.license_numbers?.join(", ") || "None detected"}</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- 11. Advertising Claim Analysis -->
-    <div class="section" id="section-ad-claims">
-      <div class="section-title">11. Advertising Claim &amp; Pressure Analysis</div>
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Claim / Pressure Pattern</th>
-            <th>Type</th>
-            <th>Meaning</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${(rawResult.ad_claim_analysis?.ad_pressure_signals || []).map((sig) => `
-            <tr>
-              <td class="font-semibold">${escapeHtml(sig.text)}</td>
-              <td>${formatProvenanceBadge(sig.source)} <span style="font-size: 12px; font-weight: 600;">${escapeHtml(sig.type.toUpperCase())}</span></td>
-              <td style="font-size: 13px; color: #475569;">${escapeHtml(sig.meaning)}</td>
-            </tr>
-          `).join("")}
-          ${(rawResult.ad_claim_analysis?.ad_pressure_signals || []).length === 0 ? `<tr><td colspan="3" class="empty-text">No high-pressure promotional claims detected.</td></tr>` : ""}
-        </tbody>
-      </table>
-    </div>
-
-    <!-- 12. Cross-Source Consistency Matrix -->
-    <div class="section" id="section-cross-source">
-      <div class="section-title">12. Cross-Source Consistency Matrix</div>
-      ${productConsistencyHtml || `
+      <!-- 2. Profile Overview -->
+      <div class="section" id="section-profile-overview">
+        <div class="section-title">2. Profile Overview &amp; Product &amp; Seller Information</div>
+        <table class="data-table">
+          <tbody>
+            <tr><td class="font-semibold" style="width: 200px;">Username</td><td>${escapeHtml(profileUsername)}</td></tr>
+            <tr><td class="font-semibold">Display Name / Entity</td><td>${escapeHtml(profileDisplayName)}</td></tr>
+            <tr><td class="font-semibold">Product Name</td><td>${productNameDisplay}</td></tr>
+            <tr><td class="font-semibold">Brand</td><td>${brandNameDisplay}</td></tr>
+            <tr><td class="font-semibold">Category</td><td>${escapeHtml(data.product.category || "General")}</td></tr>
+            <tr><td class="font-semibold">Price</td><td>${escapeHtml(data.product.price || "N/A")}</td></tr>
+            <tr><td class="font-semibold">Verification Badge</td><td>${formatResultBadge(profileVerified)}</td></tr>
+            <tr><td class="font-semibold">Followers / Audience</td><td>${escapeHtml(followerDisplay)}</td></tr>
+            <tr><td class="font-semibold">Post Activity</td><td>${escapeHtml(postCountDisplay)}</td></tr>
+            <tr><td class="font-semibold">Profile URL</td><td><a href="${escapeHtml(profileInv.profileUrl)}" target="_blank" rel="noopener noreferrer" style="color: #0284c7; text-decoration: underline;">${escapeHtml(profileInv.profileUrl)}</a></td></tr>
+          </tbody>
+        </table>
+        
+        <div class="subsection-title">Investigation Source Overview</div>
         <table class="data-table">
           <thead>
             <tr>
-              <th>Field</th>
-              <th>Instagram</th>
-              <th>Meta Ad</th>
-              <th>Website</th>
-              <th>Product Image / Packaging</th>
-              <th>Result</th>
+              <th>Investigation Source</th>
+              <th>Status</th>
+              <th>Details</th>
             </tr>
           </thead>
           <tbody>
-            ${matrixRows}
+            <tr>
+              <td>${formatProvenanceBadge("instagram")} Instagram Profile & Post</td>
+              <td><span class="badge badge-success">AVAILABLE</span></td>
+              <td>Caption length: ${rawResult.evidence?.post?.caption?.length || 0} chars, Media count: ${rawResult.evidence?.media?.length || 0}</td>
+            </tr>
+            <tr>
+              <td>${formatProvenanceBadge("meta_ad")} Meta Ad Library / Advertising Intelligence</td>
+              <td>${(rawResult.meta_ad_evidence?.status === "found" || adIntel?.status === "FOUND") ? `<span class="badge badge-success">FOUND</span>` : `<span class="badge badge-neutral">${rawResult.meta_ad_evidence?.status?.toUpperCase() || adIntel?.status || "UNAVAILABLE"}</span>`}</td>
+              <td>${escapeHtml(rawResult.meta_ad_evidence?.limitation || `Discovered ${adIntel?.totalAdsDiscovered ?? rawResult.meta_ad_evidence?.ads?.length ?? 0} campaign(s)`)}</td>
+            </tr>
+            <tr>
+              <td>${formatProvenanceBadge("website")} External Web Store</td>
+              <td>${rawResult.website_evidence?.status === "accessible" ? `<span class="badge badge-success">ACCESSIBLE</span>` : `<span class="badge badge-neutral">UNAVAILABLE</span>`}</td>
+              <td>${escapeHtml(rawResult.website_evidence?.domain || "No independent storefront detected")}</td>
+            </tr>
+            <tr>
+              <td>${formatProvenanceBadge("ocr")} Media & Packaging OCR</td>
+              <td>${rawResult.media_evidence?.ocr?.status === "success" || rawResult.media_evidence?.ocr?.status === "partial" ? `<span class="badge badge-success">ANALYZED</span>` : `<span class="badge badge-neutral">UNAVAILABLE</span>`}</td>
+              <td>Extracted ${rawResult.media_evidence?.ocr?.text?.length || 0} chars of visible package text</td>
+            </tr>
           </tbody>
         </table>
-      `}
-    </div>
-
-    <!-- 13. Evidence Timeline -->
-    <div class="section" id="section-timeline">
-      <div class="section-title">13. Evidence Timeline</div>
-      ${timelineHtml}
-    </div>
-
-    <!-- 14. Explainable Risk Factors, Trust & Risk Signals -->
-    <div class="section" id="section-risk-factors">
-      <div class="section-title">14. Explainable Risk Factors, Trust Signals &amp; Risk Signals</div>
-      <div style="margin-bottom: 16px;">
-        ${riskFactorsHtml}
       </div>
-      <div style="margin-top: 16px;">
-        <div class="font-semibold" style="margin-bottom: 8px; font-size: 13px; color: #166534;">POSITIVE TRUST SIGNALS</div>
+
+      <!-- 3. Raw Bio -->
+      <div class="section" id="section-raw-bio">
+        <div class="section-title">3. Raw Bio</div>
+        ${rawBioHtml}
+      </div>
+
+      <!-- 4. Bio Claim Extraction -->
+      <div class="section" id="section-bio-claim-extraction">
+        <div class="section-title">4. Bio Claim Extraction</div>
+        ${bioClaimsHtml}
+      </div>
+
+      <!-- 5. Bio Claim Verification -->
+      <div class="section" id="section-bio-claim-verification">
+        <div class="section-title">5. Bio Claim Verification</div>
+        ${bioVerificationHtml}
+      </div>
+
+      <!-- 6. External Links -->
+      <div class="section" id="section-external-links">
+        <div class="section-title">6. External Links</div>
+        ${externalLinksHtml}
+      </div>
+
+      <!-- 7. Identity Graph -->
+      <div class="section" id="section-identity-graph">
+        <div class="section-title">7. Identity Graph</div>
+        ${identityGraphHtml}
+      </div>
+
+      <!-- 8. Highlights Investigation -->
+      <div class="section" id="section-highlights-investigation">
+        <div class="section-title">8. Highlights Investigation</div>
+        ${highlightsHtml}
+      </div>
+
+      <!-- 9. Content Investigation -->
+      <div class="section" id="section-content-investigation">
+        <div class="section-title">9. Content Investigation</div>
+        ${contentHtml}
+      </div>
+
+      <!-- 10. Cross-Source Consistency -->
+      <div class="section" id="section-cross-source-consistency">
+        <div class="section-title">10. Cross-Source Consistency Matrix</div>
+        ${crossSourceConsistencyHtml}
+      </div>
+
+      <!-- 11. Advertising Intelligence -->
+      <div class="section" id="section-advertising-intelligence" style="background: #fdfefe;">
+        <div class="section-title" style="color: #0284c7; font-size: 15px;">📢 11. Advertising Intelligence</div>
+        
+        <div class="summary-grid" style="margin-bottom: 16px;">
+          <div class="summary-card">
+            <div class="summary-label">Advertiser Identity</div>
+            <div class="summary-value">${escapeHtml(adIntel?.advertiserIdentity || rawResult.meta_ad_evidence?.advertiserName || "None detected")}</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Ads Discovered</div>
+            <div class="summary-value">${adIntel?.totalAdsDiscovered ?? rawResult.meta_ad_evidence?.ads?.length ?? 0} total</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Active / Historical</div>
+            <div class="summary-value">${adIntel?.activeAdCount ?? 0} active / ${adIntel?.historicalAdCount ?? 0} past</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Advertising Span</div>
+            <div class="summary-value">${escapeHtml(adIntel?.advertisingSpan || "HISTORY_UNAVAILABLE")}</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Platforms</div>
+            <div class="summary-value">${escapeHtml(adIntel?.platforms.join(", ") || "INSTAGRAM")}</div>
+          </div>
+        </div>
+
+        <div class="subsection-title">📅 Advertising Timeline</div>
+        ${adTimelineTreeHtml}
+
+        <div class="subsection-title">🔗 Advertiser Identity Matching</div>
+        ${advertiserIdentitySectionHtml}
+
+        <div class="subsection-title">🌐 Destination Domain Analysis</div>
+        ${destinationAnalysisHtml}
+
+        <div class="subsection-title">🎨 Creative History &amp; Consistency</div>
+        ${creativeHistoryHtml}
+
+        <div class="subsection-title">🔄 Instagram &harr; Meta Ad Correlation</div>
+        ${instaMetaCorrelationHtml}
+
+        <div class="subsection-title">📚 Ad Evidence Ledger</div>
+        ${adEvidenceLedgerHtml}
+      </div>
+
+      <!-- 12. Trust Signals -->
+      <div class="section" id="section-trust-signals">
+        <div class="section-title">12. Trust Signals</div>
         ${trustSignalsHtml}
       </div>
-      <div style="margin-top: 16px;">
-        <div class="font-semibold" style="margin-bottom: 8px; font-size: 13px; color: #991b1b;">RISK SIGNALS</div>
+
+      <!-- 13. Risk Signals -->
+      <div class="section" id="section-risk-signals">
+        <div class="section-title">13. Risk Signals</div>
         ${riskSignalsHtml}
       </div>
-      <div style="margin-top: 16px;">
-        <div class="font-semibold" style="margin-bottom: 8px; font-size: 13px; color: #475569;">Missing Information</div>
-        ${missingInfoHtml}
+
+      <!-- 14. Unknown / Unavailable Information -->
+      <div class="section" id="section-unknown-information">
+        <div class="section-title">14. Unknown / Unavailable Information &amp; Missing Information</div>
+        ${unknownInfoHtml}
       </div>
-      <div style="margin-top: 16px;">
-        <div class="font-semibold" style="margin-bottom: 8px; font-size: 13px; color: #0f172a;">Evidence Traceability</div>
-        ${traceableHtml}
+
+      <!-- 15. Evidence Ledger -->
+      <div class="section" id="section-evidence-ledger">
+        <div class="section-title">15. Evidence Ledger</div>
+        ${unifiedLedgerHtml}
+        
+        ${data.traceable_conclusions && data.traceable_conclusions.length > 0 ? `
+          <div class="subsection-title">Evidence Traceability Mapping</div>
+          ${data.traceable_conclusions.map((tc) => `
+            <div style="margin-bottom: 8px; padding: 8px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px;">
+              <div style="font-weight: 600; font-size: 13px;">🔍 ${escapeHtml(tc.conclusion)}</div>
+              ${tc.evidence.map((ev) => `
+                <div style="font-size: 12px; margin-top: 2px;">
+                  ${formatProvenanceBadge(ev.source)} <span>${escapeHtml(ev.value)}</span>
+                </div>
+              `).join("")}
+            </div>
+          `).join("")}
+        ` : ""}
+      </div>
+
+      <!-- 16. Score Calculation -->
+      <div class="section" id="section-score-calculation">
+        <div class="section-title">16. Score Calculation</div>
+        ${scoreCalculationHtml}
+      </div>
+
+      <!-- 17. Final Risk Assessment -->
+      <div class="section" id="section-final-risk-assessment">
+        <div class="section-title">17. Final Risk Assessment &amp; Final Recommendation</div>
+        ${finalRiskAssessmentHtml}
+      </div>
+
+      <!-- 18. Investigation Limitations -->
+      <div class="section" id="section-investigation-limitations" style="background: #f8fafc;">
+        <div class="section-title">18. Investigation Limitations &amp; Disclaimer</div>
+        ${limitationsHtml}
       </div>
     </div>
 
-    <!-- 15. Post-Purchase Comparison (Conditional) -->
-    ${postPurchaseHtml}
-
-    <!-- 16. Recommendation & Limitations -->
-    <div class="section" id="section-recommendation">
-      <div class="section-title">15. Final Recommendation</div>
-      <div style="font-size: 14px; font-weight: 600; color: #0f172a; line-height: 1.6;">
-        ${escapeHtml(data.recommendation)}
+    <!-- Sticky Side Panel for Future Chrome Side Panel Extension -->
+    <div class="side-panel">
+      <div class="side-panel-card">
+        <div class="side-panel-header">${escapeHtml(profileUsername)}</div>
+        <div class="side-stat-row">
+          <span class="side-label">TRUST SCORE:</span>
+          <strong style="font-size: 16px; color: #0284c7;">${overallTrustScore} / 100</strong>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Confidence:</span>
+          <strong>${confidenceScore}%</strong>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Evidence Coverage:</span>
+          <strong>${coveragePercent}%</strong>
+        </div>
+        <hr style="margin: 10px 0; border: none; border-top: 1px solid #e2e8f0;" />
+        <div class="side-stat-row">
+          <span class="side-label">Identity:</span>
+          <strong>${profileInv.sidePanelData.dimensions.identity.percentage}%</strong>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Bio:</span>
+          <strong>${profileInv.sidePanelData.dimensions.bio.percentage}%</strong>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Content:</span>
+          <strong>${profileInv.sidePanelData.dimensions.content.percentage}%</strong>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">External Identity:</span>
+          <strong>${profileInv.sidePanelData.dimensions.externalIdentity.percentage}%</strong>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Advertising:</span>
+          <strong>${profileInv.sidePanelData.dimensions.advertising.percentage}%</strong>
+        </div>
+        <div style="margin-top: 14px;">
+          <a href="#section-evidence-ledger" class="side-panel-btn">[Evidence Ledger]</a>
+          <a href="#section-score-calculation" class="side-panel-btn" style="background: #475569;">[Why this score?]</a>
+          <a href="#section-investigation-summary" class="side-panel-btn" style="background: #0f172a;">[Detailed Report]</a>
+        </div>
       </div>
-    </div>
 
-    <div class="section" id="section-limitations" style="background: #f8fafc;">
-      <div class="section-title">16. Limitations &amp; Disclaimer</div>
-      <div style="font-size: 12px; color: #64748b; line-height: 1.5;">
-        ${escapeHtml(data.disclaimer)} This automated report is generated by Veriqoo by cross-referencing available public signals from Instagram, Meta Ad Library, destination websites, and computer vision OCR. The absence of advertisements or external storefronts does not automatically indicate fraud.
+      <div class="side-panel-card">
+        <div class="side-panel-header">📢 Advertising</div>
+        <div class="side-stat-row">
+          <span class="side-label">Ads:</span>
+          <strong>${adIntel?.totalAdsDiscovered ?? rawResult.meta_ad_evidence?.ads?.length ?? 0}</strong>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Active:</span>
+          <strong>${adIntel?.activeAdCount ?? 0}</strong>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Historical:</span>
+          <strong>${adIntel?.historicalAdCount ?? 0}</strong>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Ad History:</span>
+          <strong>${escapeHtml(adIntel?.advertisingSpan || "HISTORY_UNAVAILABLE")}</strong>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Advertiser Match:</span>
+          <span>${formatAdvertiserBadge(adIntel?.advertiserMatch?.rating)}</span>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Domain Consistency:</span>
+          <span>${formatConsistencyLevelBadge(adIntel?.destinationAnalysis?.domainConsistency)}</span>
+        </div>
+        <div class="side-stat-row">
+          <span class="side-label">Creative Consistency:</span>
+          <span>${formatConsistencyLevelBadge(adIntel?.creativeHistory?.creativeConsistency)}</span>
+        </div>
+        <div style="margin-top: 14px;">
+          <a href="#section-advertising-intelligence" class="side-panel-btn">View Ad History</a>
+        </div>
       </div>
     </div>
   </div>
