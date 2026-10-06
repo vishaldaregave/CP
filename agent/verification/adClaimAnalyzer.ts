@@ -14,6 +14,9 @@ export function analyzeAdClaims(
   const clean = (text || "").trim();
   if (!clean) {
     return {
+      clickbait_score: 0,
+      clickbait_level: "LOW",
+      clickbait_flags: [],
       claims_detected: [],
       ad_pressure_signals: [],
       price_claims: [],
@@ -174,6 +177,44 @@ export function analyzeAdClaims(
     });
   }
 
+  // 9. Clickbait Hooks & Sensationalist Language
+  const clickbaitHookRegex = /\b(you won't believe|secret trick|doctors? (?:hate|don't want you to know)|shocking results?|must watch|don't buy before|stop scrolling|viral (?:hack|gadget|product)|crazy deal|mind-?blowing|before it gets banned|life-?changing)\b/gi;
+  let cbMatch: RegExpExecArray | null;
+  while ((cbMatch = clickbaitHookRegex.exec(clean)) !== null) {
+    const matched = cbMatch[1];
+    pressure_signals.push({
+      type: "clickbait_hook",
+      text: matched,
+      source,
+      meaning: `Advertisement uses an exaggerated clickbait hook ("${matched}") designed to manipulate emotional curiosity.`,
+    });
+  }
+
+  // 10. Free Bait & Micro-Price Anchoring
+  const freeBaitRegex = /\b(100%\s*free|pay only shipping|free gift inside|zero cost today|free\s*delivery|free\s*shipping)\b/gi;
+  let fbMatch: RegExpExecArray | null;
+  while ((fbMatch = freeBaitRegex.exec(clean)) !== null) {
+    const matched = fbMatch[1];
+    pressure_signals.push({
+      type: "price_anchoring",
+      text: matched,
+      source,
+      meaning: `Advertisement uses a free incentive ("${matched}") often associated with hidden recurring charges, conditional minimum carts, or platform promotion hooks.`,
+    });
+  }
+
+  const microPriceRegex = /\b(?:at|for|only|just)\s*(?:₹|rs\.?|\$)\s*[01]\b|\b(?:₹|rs\.?|\$)\s*1\s*(?:deal|offer|sale)?\b/gi;
+  let mpMatch: RegExpExecArray | null;
+  while ((mpMatch = microPriceRegex.exec(clean)) !== null) {
+    const matched = mpMatch[0];
+    pressure_signals.push({
+      type: "price_anchoring",
+      text: matched,
+      source,
+      meaning: `Advertisement uses aggressive micro-price anchoring ("${matched}") designed to drive impulse clicks.`,
+    });
+  }
+
   // Deduplicate pressure signals by type and text
   const uniquePressureSignals: AdPressureSignal[] = [];
   const seenKeys = new Set<string>();
@@ -183,6 +224,63 @@ export function analyzeAdClaims(
       seenKeys.add(key);
       uniquePressureSignals.push(sig);
     }
+  }
+
+  // Calculate Clickbait Score & Risk Level
+  let rawScore = 0;
+  const clickbait_flags: string[] = [];
+
+  const extremeDiscounts = uniquePressureSignals.filter((s) => s.type === "extreme_discount");
+  if (extremeDiscounts.length > 0) {
+    rawScore += Math.min(35, extremeDiscounts.length * 20);
+    clickbait_flags.push(`Extreme discount claims (${extremeDiscounts.map((d) => d.text).join(", ")})`);
+  }
+
+  const urgencySignals = uniquePressureSignals.filter((s) => s.type === "urgency");
+  if (urgencySignals.length > 0) {
+    rawScore += Math.min(25, urgencySignals.length * 15);
+    clickbait_flags.push(`Artificial purchase urgency (${urgencySignals.map((u) => u.text).join(", ")})`);
+  }
+
+  const scarcitySignals = uniquePressureSignals.filter((s) => s.type === "scarcity");
+  if (scarcitySignals.length > 0) {
+    rawScore += Math.min(20, scarcitySignals.length * 10);
+    clickbait_flags.push(`Manufactured scarcity (${scarcitySignals.map((s) => s.text).join(", ")})`);
+  }
+
+  const anchoringSignals = uniquePressureSignals.filter((s) => s.type === "price_anchoring");
+  if (anchoringSignals.length > 0) {
+    rawScore += Math.min(25, anchoringSignals.length * 15);
+    clickbait_flags.push(`Aggressive price anchoring (${anchoringSignals.map((a) => a.text).join(", ")})`);
+  }
+
+  const guaranteeSignals = uniquePressureSignals.filter((s) => s.type === "performance_guarantee");
+  if (guaranteeSignals.length > 0) {
+    rawScore += Math.min(30, guaranteeSignals.length * 20);
+    clickbait_flags.push(`Unsubstantiated outcome guarantees (${guaranteeSignals.map((g) => g.text).join(", ")})`);
+  }
+
+  const hookSignals = uniquePressureSignals.filter((s) => s.type === "clickbait_hook");
+  if (hookSignals.length > 0) {
+    rawScore += Math.min(25, hookSignals.length * 15);
+    clickbait_flags.push(`Sensationalist clickbait hook (${hookSignals.map((h) => h.text).join(", ")})`);
+  }
+
+  const authSignals = uniquePressureSignals.filter((s) => s.type === "authority_certification");
+  if (authSignals.length > 0) {
+    rawScore += Math.min(20, authSignals.length * 10);
+    clickbait_flags.push(`Unverified regulatory/clinical claims (${authSignals.map((a) => a.text).join(", ")})`);
+  }
+
+  const clickbait_score = Math.min(100, Math.max(0, rawScore));
+
+  let clickbait_level: "LOW" | "MODERATE" | "HIGH" | "AGGRESSIVE" = "LOW";
+  if (clickbait_score >= 70) {
+    clickbait_level = "AGGRESSIVE";
+  } else if (clickbait_score >= 45) {
+    clickbait_level = "HIGH";
+  } else if (clickbait_score >= 20) {
+    clickbait_level = "MODERATE";
   }
 
   const claims_detected = Array.from(
@@ -195,10 +293,14 @@ export function analyzeAdClaims(
       ...performance_claims,
       ...social_proof_claims,
       ...price_anchoring_claims,
+      ...hookSignals.map((h) => h.text),
     ]),
   );
 
   return {
+    clickbait_score,
+    clickbait_level,
+    clickbait_flags,
     claims_detected,
     ad_pressure_signals: uniquePressureSignals,
     price_claims: Array.from(new Set(price_claims)),

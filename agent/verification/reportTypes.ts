@@ -33,6 +33,9 @@ export interface ReportSellerInfo {
 export interface ReportRiskSummary {
   level: RiskLevel;
   confidence: number;
+  safety_score?: number;
+  clickbait_score?: number;
+  clickbait_level?: string;
 }
 
 export interface ReportEvidenceSummary {

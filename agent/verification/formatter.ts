@@ -55,6 +55,9 @@ export function formatVerificationResult(result: VerificationResult): string {
     ocr: Boolean(media_evidence?.ocr?.status === "success" || media_evidence?.ocr?.status === "partial"),
   };
 
+  const safetyScoreText = risk.safety_score !== undefined ? `${risk.safety_score}/100` : "N/A";
+  const clickbaitText = `${risk.clickbait_level || "LOW"} (${risk.clickbait_score ?? 0}/100)`;
+
   const lines: string[] = [
     "🔍 PRODUCT VERIFICATION",
     "",
@@ -70,6 +73,9 @@ export function formatVerificationResult(result: VerificationResult): string {
     "",
     "Confidence:",
     `${risk.confidence}%`,
+    "",
+    `🛡️ Safety Score: ${safetyScoreText}`,
+    `🎣 Clickbait Risk: ${clickbaitText}`,
     "",
     "━━━━━━━━━━━━━━",
     "",
@@ -123,23 +129,34 @@ export function formatVerificationResult(result: VerificationResult): string {
     lines.push("");
     lines.push("━━━━━━━━━━━━━━");
     lines.push("");
-    lines.push("📢 AD CLAIM ANALYSIS");
+    lines.push("📢 AD CLAIM ANALYSIS & CLICKBAIT AUDIT");
     lines.push("");
+    if (result.ad_claim_analysis?.clickbait_score !== undefined) {
+      lines.push(`Clickbait Level: ${result.ad_claim_analysis.clickbait_level || "LOW"} (${result.ad_claim_analysis.clickbait_score}/100)`);
+    }
+    if (result.ad_claim_analysis?.clickbait_flags && result.ad_claim_analysis.clickbait_flags.length > 0) {
+      lines.push("");
+      lines.push("🚩 Clickbait & Pressure Triggers:");
+      for (const flag of result.ad_claim_analysis.clickbait_flags.slice(0, 4)) {
+        lines.push(`• ${flag}`);
+      }
+    }
     if (uniqueClaims.length > 0) {
-      lines.push("Claims detected:");
+      lines.push("");
+      lines.push("Key claims detected:");
       for (const c of uniqueClaims.slice(0, 4)) {
         lines.push(`• "${c}"`);
       }
     }
     if (pressureSignals.length > 0) {
       lines.push("");
-      lines.push("Advertising patterns:");
+      lines.push("Tactics flagged:");
       for (const p of pressureSignals.slice(0, 3)) {
         lines.push(`⚠️ ${p.type.replace(/_/g, " ")}: "${p.text}"`);
       }
     }
     lines.push("");
-    lines.push("_These are promotional patterns requiring verification, not proof of fraud._");
+    lines.push("_High promotional pressure indicates need for independent price & seller verification._");
   }
 
   lines.push("");

@@ -175,6 +175,7 @@ export type AdPressureType =
   | "authority_certification"
   | "performance_guarantee"
   | "social_proof"
+  | "clickbait_hook"
   | "price_anchoring";
 
 export interface AdPressureSignal {
@@ -185,6 +186,9 @@ export interface AdPressureSignal {
 }
 
 export interface AdClaimAnalysis {
+  clickbait_score?: number;
+  clickbait_level?: "LOW" | "MODERATE" | "HIGH" | "AGGRESSIVE";
+  clickbait_flags?: string[];
   claims_detected: string[];
   ad_pressure_signals: AdPressureSignal[];
   price_claims: string[];
@@ -287,6 +291,9 @@ export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN";
 export interface RiskAnalysisResult {
   risk_level: RiskLevel;
   confidence: number; // 0 to 100
+  safety_score?: number; // 0 to 100
+  clickbait_score?: number; // 0 to 100
+  clickbait_level?: "LOW" | "MODERATE" | "HIGH" | "AGGRESSIVE";
   positive_signals: string[];
   risk_signals: string[];
   missing_information: string[];

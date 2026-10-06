@@ -35,7 +35,7 @@ function cleanCandidateUrl(raw: string): string {
 export function extractInstagramUrl(text: string): string | null {
   if (!text || typeof text !== "string") return null;
 
-  const urlPattern = /(?:https?:\/\/|www\.)[^\s<>"'{}|\\^`]+/gi;
+  const urlPattern = /(?:https?:\/\/|www\.|(?:[a-z0-9_-]+\.)?instagram\.com\/|instagr\.am\/)[^\s<>"'{}|\\^`]+/gi;
   const matches = text.match(urlPattern);
   if (!matches) return null;
 
@@ -72,7 +72,11 @@ export function parseInstagramUrl(rawUrl: string): {
   shortcode: string | null;
 } {
   try {
-    const parsed = new URL(rawUrl);
+    const urlToParse =
+      rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
+        ? rawUrl
+        : `https://${rawUrl}`;
+    const parsed = new URL(urlToParse);
     const pathname = parsed.pathname;
 
     let type: "reel" | "post" | "video" | "unknown" = "unknown";
@@ -104,7 +108,7 @@ export function parseInstagramUrl(rawUrl: string): {
 }
 
 /**
- * Decodes basic HTML entities and JSON escapes.
+ * Decodes HTML entities (including decimal, hex, and unicode currencies like Rupee ₹).
  */
 function decodeHtmlEntities(str: string): string {
   if (!str) return "";
@@ -119,7 +123,22 @@ function decodeHtmlEntities(str: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&#x27;/g, "'")
-    .replace(/&#x2F;/g, "/");
+    .replace(/&#x2F;/g, "/")
+    .replace(/&#x20b9;/gi, "₹")
+    .replace(/&#(\d+);/g, (_, dec) => {
+      try {
+        return String.fromCodePoint(parseInt(dec, 10));
+      } catch {
+        return "";
+      }
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      try {
+        return String.fromCodePoint(parseInt(hex, 16));
+      } catch {
+        return "";
+      }
+    });
 }
 
 /**
@@ -151,7 +170,7 @@ function extractMetaTags(html: string): Record<string, string> {
 }
 
 /**
- * Parses author username and caption from OpenGraph title and description.
+ * Parses author username, display name, and caption from OpenGraph title and description.
  */
 function parseAuthorAndCaption(
   title?: string,
@@ -169,10 +188,15 @@ function parseAuthorAndCaption(
         displayName = userMatch[1].trim() || null;
       } else if (userMatch[1].startsWith("@")) {
         username = userMatch[1].slice(1).trim();
+        displayName = username;
+      } else {
+        displayName = userMatch[1].trim() || null;
+        // In "Brand on Instagram", the brand name can serve as creator identity
+        username = userMatch[1].trim().toLowerCase().replace(/\s+/g, "");
       }
     }
 
-    const quoteMatch = title.match(/:\s*["'“](.+?)["'”]\s*$/);
+    const quoteMatch = title.match(/:\s*["'“]([\s\S]+?)["'”]\s*$/);
     if (quoteMatch) {
       caption = quoteMatch[1].trim();
     }
@@ -180,16 +204,22 @@ function parseAuthorAndCaption(
 
   if (description) {
     if (!username) {
-      const descUserMatch = description.match(/@([a-zA-Z0-9._]+)/);
+      const descUserMatch =
+        description.match(/(?:^|\s|-)\s*([a-zA-Z0-9._]+)\s+on\s+[A-Za-z]+\s+\d+/i) ||
+        description.match(/@([a-zA-Z0-9._]+)/);
       if (descUserMatch) {
         username = descUserMatch[1];
       }
     }
 
-    const descQuoteMatch = description.match(/:\s*["'“](.+?)["'”]\s*$/);
+    const descQuoteMatch = description.match(/:\s*["'“]([\s\S]+?)["'”]\s*[.]?\s*$/);
     if (descQuoteMatch && !caption) {
       caption = descQuoteMatch[1].trim();
-    } else if (!caption && !description.toLowerCase().includes("see instagram photos and videos") && !description.toLowerCase().includes("create an account or log in")) {
+    } else if (
+      !caption &&
+      !description.toLowerCase().includes("see instagram photos and videos") &&
+      !description.toLowerCase().includes("create an account or log in")
+    ) {
       caption = description.trim();
     }
   }
@@ -298,6 +328,45 @@ export async function collectInstagramEvidence(
         if (parsed.caption) {
           post.caption = parsed.caption;
           evidence.push(`Extracted post text / caption (${parsed.caption.length} characters)`);
+        }
+      }
+
+      // Fallback: If caption was not extracted, query with Twitterbot which often receives full captions
+      if (!post.caption) {
+        try {
+          const twController = new AbortController();
+          const twTimeout = setTimeout(() => twController.abort(), 6000);
+          const twRes = await fetch(canonicalUrl, {
+            signal: twController.signal,
+            headers: {
+              "User-Agent": "Twitterbot/1.0",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.9",
+            },
+          });
+          clearTimeout(twTimeout);
+          if (twRes.ok) {
+            const twHtml = await twRes.text();
+            const twMeta = extractMetaTags(twHtml);
+            const twOgTitle = twMeta["og:title"] || twMeta["twitter:title"] || twMeta["title"];
+            const twOgDesc = twMeta["og:description"] || twMeta["twitter:description"] || twMeta["description"];
+            const twParsed = parseAuthorAndCaption(twOgTitle, twOgDesc);
+            if (twParsed.username && !account.username) {
+              account.username = twParsed.username;
+              seller.username = twParsed.username;
+              evidence.push(`Identified creator username: @${twParsed.username}`);
+            }
+            if (twParsed.displayName && !account.display_name) {
+              account.display_name = twParsed.displayName;
+              seller.name = twParsed.displayName;
+            }
+            if (twParsed.caption && !post.caption) {
+              post.caption = twParsed.caption;
+              evidence.push(`Extracted post text / caption via social preview (${twParsed.caption.length} characters)`);
+            }
+          }
+        } catch {
+          // Fallback fetch error non-blocking
         }
       }
 

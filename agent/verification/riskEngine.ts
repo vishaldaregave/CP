@@ -110,9 +110,7 @@ export function evaluateRisk(
     if (trustMatrix.fields.product_name.result === "MATCH") confidence += 5;
   }
 
-  // Determine Risk Level
-  let risk_level: RiskLevel = "UNKNOWN";
-
+  // High Risk Signal Check
   const hasHighRiskSignal = risk_signals.some(
     (s) =>
       s.toLowerCase().includes("mismatch") ||
@@ -121,30 +119,65 @@ export function evaluateRisk(
       s.toLowerCase().includes("unreachable"),
   );
 
+  // -------------------------------------------------------------
+  // Safety Score Calculation (0 - 100)
+  // -------------------------------------------------------------
+  let safety_score = 65; // Baseline neutral score for a public post
+
+  // Positive trust boosters:
+  if (seller.username) safety_score += 5;
+  if (hasWebsite) safety_score += 10;
+  if (website?.policies?.refund || website?.policies?.returns) safety_score += 15;
+  if (website?.contact?.email || website?.contact?.phone) safety_score += 10;
+  if (hasPackagingLicense) safety_score += 15;
+  if (trustMatrix && trustMatrix.fields.brand.result === "MATCH") safety_score += 10;
+  if (trustMatrix && trustMatrix.fields.product_name.result === "MATCH") safety_score += 5;
+  if (metaAd && metaAd.status === "found") safety_score += 10;
+
+  // Clickbait & Deceptive Advertising Deductions:
+  const cbScore = adClaims?.clickbait_score || 0;
+  const cbLevel = adClaims?.clickbait_level || "LOW";
+  if (cbScore >= 75) {
+    safety_score -= 35;
+    risk_signals.push(`Aggressive advertising pressure detected (Clickbait Index: ${cbScore}/100)`);
+  } else if (cbScore >= 45) {
+    safety_score -= 20;
+    risk_signals.push(`High advertising pressure detected (Clickbait Index: ${cbScore}/100)`);
+  } else if (cbScore >= 20) {
+    safety_score -= 10;
+  }
+
+  // Severe risk deductions:
   if (hasHighRiskSignal) {
-    risk_level = "HIGH";
-    confidence = Math.max(confidence, 85); // High confidence in the high-risk verdict
-  } else if (risk_signals.length >= 2) {
+    safety_score -= 40;
+  }
+  if (trustMatrix && trustMatrix.fields.price.result === "MISMATCH") {
+    safety_score -= 25;
+  }
+  if (!hasWebsite && !hasPackagingLicense) {
+    safety_score -= 15; // Zero independent store or regulatory corroboration
+  }
+
+  // Bound safety_score between 5 and 98
+  safety_score = Math.max(5, Math.min(98, Math.round(safety_score)));
+
+  // Determine Risk Level based on Safety Score and corroboration
+  let risk_level: RiskLevel = "UNKNOWN";
+  if (safety_score < 45 || hasHighRiskSignal || risk_signals.length >= 2) {
     risk_level = "HIGH";
     confidence = Math.max(confidence, 80);
-  } else if (risk_signals.length === 1) {
-    risk_level = "MEDIUM";
-    confidence = Math.max(confidence, 60);
-  } else if (positive_signals.length >= 2 && risk_signals.length === 0 && hasIndependentEvidence) {
-    // LOW risk requires independent website or regulatory evidence
+  } else if (safety_score >= 72 && positive_signals.length >= 1 && hasIndependentEvidence) {
     risk_level = "LOW";
-    confidence = Math.min(90, Math.max(70, confidence));
-  } else if (positive_signals.length >= 1 && risk_signals.length === 0 && hasIndependentEvidence) {
-    risk_level = "LOW";
-    confidence = Math.min(80, Math.max(65, confidence));
-  } else if (!hasIndependentEvidence && hasMedia && hasOcr) {
-    // Instagram + Media/OCR alone without independent external store -> CAUTION / MEDIUM
-    risk_level = "MEDIUM";
-    confidence = Math.min(50, Math.max(35, confidence));
-  } else {
-    // Single source (Instagram only, no corroborating independent or OCR evidence)
+    confidence = Math.min(90, Math.max(65, confidence));
+  } else if (!hasIndependentEvidence && !hasMedia && !hasOcr) {
     risk_level = "UNKNOWN";
     confidence = Math.min(30, confidence);
+  } else if (!hasCaption && !hasUsername) {
+    risk_level = "UNKNOWN";
+    confidence = Math.min(30, confidence);
+  } else {
+    risk_level = "MEDIUM";
+    confidence = Math.max(50, Math.min(75, confidence));
   }
 
   // Cap confidence between 10 and 95
@@ -153,19 +186,17 @@ export function evaluateRisk(
   // Recommendation construction
   let recommendation = "";
   if (risk_level === "HIGH") {
-    recommendation =
-      "High risk detected. Conflicting product/brand evidence or replica indicators were found. Avoid direct wire or advance non-refundable payments.";
+    recommendation = `High risk detected (Safety Score: ${safety_score}/100). Unverified seller, high clickbait, or conflicting claims found. Do NOT make advance online payments; insist on Cash on Delivery (COD) or avoid purchasing.`;
   } else if (risk_level === "MEDIUM") {
-    if (!hasIndependentEvidence) {
-      recommendation =
-        "Proceed with caution. Brand/product text matches post media, but no independent web store or registered entity was found. Verify the seller and return policies before making advance payments.";
+    if (cbScore >= 45) {
+      recommendation = `Moderate risk (Safety Score: ${safety_score}/100). Heavy promotional pressure detected (${cbScore}/100). Verify real customer reviews and refund policies before purchasing.`;
+    } else if (!hasIndependentEvidence) {
+      recommendation = `Proceed with caution (Safety Score: ${safety_score}/100). No independent web store or registered entity was found. Verify the seller and return policies before making advance payments.`;
     } else {
-      recommendation =
-        "Proceed with caution. Check seller reviews and verify business details independently before purchasing.";
+      recommendation = `Proceed with caution (Safety Score: ${safety_score}/100). Check seller reviews and verify return policies independently before purchasing.`;
     }
   } else if (risk_level === "LOW") {
-    recommendation =
-      "Proceed with normal purchasing precautions. Multi-source evidence is consistent across independent platforms.";
+    recommendation = `Low risk (Safety Score: ${safety_score}/100). Multi-source evidence is consistent across independent platforms. Proceed with standard online purchasing precautions.`;
   } else {
     recommendation =
       "Only limited single-source evidence was available. Verify the seller and product details independently.";
@@ -180,6 +211,9 @@ export function evaluateRisk(
   return {
     risk_level,
     confidence,
+    safety_score,
+    clickbait_score: cbScore,
+    clickbait_level: cbLevel,
     positive_signals: Array.from(new Set(positive_signals)),
     risk_signals: Array.from(new Set(risk_signals)),
     missing_information: Array.from(new Set(missing_information)),

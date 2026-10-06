@@ -11,7 +11,10 @@
     "dev": "eve dev",
     "start": "eve start",
     "test": "node --test test-instagram.mjs test-verification.mjs",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "verify": "node verify-cli.mjs",
+    "api": "node server.mjs",
+    "start:api": "node server.mjs"
   },
   "dependencies": {
     "@cartesia/cartesia-js": "^4.0.1",

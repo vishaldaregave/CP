@@ -158,6 +158,9 @@ export function buildReportData(result: VerificationResult): VerificationReportD
     risk: {
       level: result.risk?.risk_level || "UNKNOWN",
       confidence: result.risk?.confidence || 0,
+      safety_score: result.risk?.safety_score,
+      clickbait_score: result.risk?.clickbait_score,
+      clickbait_level: result.risk?.clickbait_level,
     },
     evidence,
     source_overview,
@@ -508,7 +511,19 @@ export function buildReportHtml(data: VerificationReportData, rawResult: Verific
           <div class="summary-value" style="margin-top:8px;">${formatRiskBadge(data.risk.level)}</div>
         </div>
         <div class="summary-card">
-          <div class="summary-label">Confidence Score</div>
+          <div class="summary-label">Safety Score</div>
+          <div class="summary-value" style="color: ${data.risk.level === "LOW" ? "var(--success)" : data.risk.level === "MEDIUM" ? "var(--warning)" : "var(--danger)"}; font-weight:700;">
+            ${escapeHtml(data.risk.safety_score !== undefined ? `${data.risk.safety_score}/100` : `${data.risk.confidence}%`)}
+          </div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Clickbait Risk</div>
+          <div class="summary-value" style="font-size: 15px; margin-top: 4px;">
+            ${escapeHtml(data.risk.clickbait_level || "LOW")} (${escapeHtml(data.risk.clickbait_score || 0)}/100)
+          </div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Analysis Confidence</div>
           <div class="summary-value">${escapeHtml(data.risk.confidence)}%</div>
         </div>
         <div class="summary-card">
@@ -516,7 +531,7 @@ export function buildReportHtml(data: VerificationReportData, rawResult: Verific
           <div class="summary-value">${escapeHtml(data.product.name || "Unspecified")}</div>
         </div>
         <div class="summary-card">
-          <div class="summary-label">Brand</div>
+          <div class="summary-label">Brand / Creator</div>
           <div class="summary-value">${escapeHtml(data.product.brand || "Unspecified")}</div>
         </div>
       </div>
