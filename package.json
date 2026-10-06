@@ -1,0 +1,14 @@
+{
+  "name": "insta-fake-add-project",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test:profile": "npm --prefix eve-wa-adapter run test:profile --",
+    "test": "npm --prefix eve-wa-adapter test",
+    "start:api": "npm --prefix eve-wa-adapter run start:api",
+    "build:extension": "npm --prefix eve-wa-adapter run build:extension",
+    "typecheck": "npm --prefix eve-wa-adapter run typecheck",
+    "dev": "npm --prefix eve-wa-adapter run dev",
+    "start": "npm --prefix eve-wa-adapter run start"
+  }
+}
