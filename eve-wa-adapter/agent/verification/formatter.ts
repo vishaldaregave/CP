@@ -120,15 +120,52 @@ export function formatVerificationResult(result: VerificationResult, reportId?: 
     }
   }
 
-  // 2. META AD LIBRARY & CLAIMS
-  if (meta_ad_evidence) {
+  // 2. META AD LIBRARY & ADVERTISING INTELLIGENCE
+  const adIntel = result.advertising_intelligence;
+  if (adIntel || meta_ad_evidence) {
     lines.push("");
     lines.push("━━━━━━━━━━━━━━━━━━");
     lines.push("");
     lines.push("📢 META ADVERTISING");
     lines.push("📢 META AD LIBRARY");
 
-    if (meta_ad_evidence.status === "found") {
+    if (adIntel && adIntel.status === "FOUND") {
+      lines.push("Status: FOUND");
+      lines.push("✓ Ad evidence found");
+      if (adIntel.advertiserIdentity) {
+        lines.push(`Advertiser: ${adIntel.advertiserIdentity}`);
+      }
+      lines.push(`Ads found: ${adIntel.totalAdsDiscovered}`);
+      if (adIntel.activeAdCount > 0 || adIntel.historicalAdCount > 0) {
+        lines.push(`Campaigns: ${adIntel.activeAdCount} active, ${adIntel.historicalAdCount} historical`);
+      }
+      if (adIntel.advertisingSpan && adIntel.advertisingSpan !== "HISTORY_UNAVAILABLE") {
+        lines.push(`Ad Span: ${adIntel.advertisingSpan}`);
+      }
+      if (adIntel.advertiserMatch?.rating) {
+        lines.push(`Advertiser Match: ${adIntel.advertiserMatch.rating}`);
+      }
+      if (adIntel.destinationAnalysis?.hasDomainAnomaly) {
+        lines.push("⚠️ DOMAIN ANOMALY detected in destination URLs");
+      }
+      if (adIntel.instagramCorrelation?.isAnomaly) {
+        lines.push(`⚠️ ${adIntel.instagramCorrelation.result}`);
+      }
+
+      if (ad_claim_analysis?.price_anchoring_claims?.length) {
+        for (const claim of ad_claim_analysis.price_anchoring_claims.slice(0, 2)) {
+          lines.push(`⚠️ ${claim}`);
+        }
+      }
+      if (ad_claim_analysis?.authenticity_claims?.length) {
+        for (const claim of ad_claim_analysis.authenticity_claims.slice(0, 2)) {
+          lines.push(`⚠️ "${claim}"`);
+        }
+      }
+      if (ad_claim_analysis?.urgency_claims?.length) {
+        lines.push("⚠️ Urgency language detected");
+      }
+    } else if (meta_ad_evidence && meta_ad_evidence.status === "found") {
       lines.push("Status: FOUND");
       lines.push("✓ Ad evidence found");
       if (meta_ad_evidence.advertiserName) {
@@ -149,7 +186,7 @@ export function formatVerificationResult(result: VerificationResult, reportId?: 
       if (ad_claim_analysis?.urgency_claims?.length) {
         lines.push("⚠️ Urgency language detected");
       }
-    } else if (meta_ad_evidence.status === "unavailable" || meta_ad_evidence.status === "error") {
+    } else if (meta_ad_evidence?.status === "unavailable" || meta_ad_evidence?.status === "error" || adIntel?.status === "UNAVAILABLE" || adIntel?.status === "ERROR") {
       lines.push("Status: UNAVAILABLE");
       lines.push("⚪ Library search unavailable (no risk penalty)");
     } else {

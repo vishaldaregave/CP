@@ -152,6 +152,7 @@ export interface MediaEvidence {
 
 export interface MetaAdRecord {
   libraryId: string;
+  adId?: string;
   advertiserName: string | null;
   advertiserPageId: string | null;
   publisherPlatforms: string[];
@@ -162,7 +163,12 @@ export interface MetaAdRecord {
   linkDescription: string | null;
   adSnapshotUrl: string | null;
   destinationUrl: string | null;
-  evidenceSource: "meta_ad_library";
+  destinationDomain?: string | null;
+  adStatus?: "ACTIVE" | "INACTIVE" | "PAUSED" | "UNKNOWN";
+  firstObservedDate?: string | null;
+  lastObservedDate?: string | null;
+  claims?: string[];
+  evidenceSource: "meta_ad_library" | "apify" | "meta_ad_library_apify";
 }
 
 export interface MetaAdEvidence {
@@ -171,7 +177,7 @@ export interface MetaAdEvidence {
   country: string;
   ads: MetaAdRecord[];
   totalFound: number;
-  source: "meta_ad_library";
+  source: "meta_ad_library" | "apify" | "meta_ad_library_apify";
   collectedAt: string;
   error?: string;
   limitation?: string;
@@ -198,6 +204,159 @@ export interface MetaAdCollectionInput {
   brand?: string | null;
   product?: string | null;
   pageId?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// ADVERTISING INTELLIGENCE TYPES
+// ---------------------------------------------------------------------------
+
+export interface AdEvidenceItem {
+  id: string; // e.g. "EV-AD-001"
+  source: string; // "Meta Ad Library / Apify" | "Meta Ad Library" | "Apify"
+  advertiser: string;
+  adId: string;
+  status: "ACTIVE" | "INACTIVE" | "PAUSED" | "UNKNOWN";
+  observed: string; // date or "HISTORY_UNAVAILABLE"
+  firstObserved?: string | null;
+  lastObserved?: string | null;
+  sourceUrl?: string | null;
+  captured: string;
+  evidenceType: "META_AD";
+  confidence: number;
+  destinationUrl?: string | null;
+  destinationDomain?: string | null;
+  platforms?: string[];
+  adTextSnippet?: string | null;
+  productClaims?: string[];
+  details?: string;
+}
+
+export interface DomainCountItem {
+  domain: string;
+  count: number;
+  percentage: number;
+}
+
+export interface DestinationDomainAnalysis {
+  primaryDomain: string | null;
+  domainCount: number;
+  domains: DomainCountItem[];
+  domainConsistency: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  hasDomainAnomaly: boolean;
+  anomalyDetails?: string | null;
+}
+
+export interface CreativeVariation {
+  creativeId?: string;
+  headline?: string | null;
+  bodySnippet?: string | null;
+  destinationUrl?: string | null;
+  deliveryDate?: string | null;
+}
+
+export interface CreativeHistoryAnalysis {
+  brandConsistency: "CONSISTENT" | "INCONSISTENT" | "UNKNOWN";
+  productConsistency: "CONSISTENT" | "INCONSISTENT" | "UNKNOWN";
+  messagingConsistency: "CONSISTENT" | "INCONSISTENT" | "UNKNOWN";
+  visualIdentityConsistency: "CONSISTENT" | "INCONSISTENT" | "UNKNOWN";
+  repeatedCreativePatterns: string[];
+  changesOverTime: string[];
+  creativeConsistencyScore: number | null;
+  creativeConsistency: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  variations: CreativeVariation[];
+}
+
+export type AdvertiserIdentityMatchRating = "MATCH" | "PARTIAL_MATCH" | "MISMATCH" | "UNKNOWN";
+
+export interface AdvertiserIdentityMatchResult {
+  instagramUsername: string | null;
+  instagramDisplayName: string | null;
+  instagramBio: string | null;
+  instagramExternalLinks: string[];
+  metaAdvertiserIdentity: string | null;
+  metaPageIdentity: string | null;
+  destinationDomain: string | null;
+  rating: AdvertiserIdentityMatchRating;
+  verdict: string;
+  confidence: number;
+  evidenceItemId?: string;
+}
+
+export interface AdInstagramCorrelation {
+  instagramContent: string;
+  metaAdContent: string;
+  result: "CONTENT_AD_MATCH" | "PROFILE_AD_MISMATCH" | "PARTIAL_MATCH" | "UNKNOWN";
+  isAnomaly: boolean;
+  explanation: string;
+  instagramEvidenceId?: string;
+  adEvidenceId?: string;
+}
+
+export interface AdWebsiteCorrelation {
+  instagramBioDomain: string | null;
+  instagramLinks: string[];
+  metaDestinationDomains: string[];
+  websiteIdentity: string | null;
+  result: "CROSS_SOURCE_IDENTITY_MATCH" | "DOMAIN_MISMATCH" | "DOMAIN_ANOMALY" | "UNKNOWN";
+  explanation: string;
+}
+
+export interface AdTimelineEntry {
+  adId: string;
+  date: string;
+  year: number | string;
+  status: "ACTIVE" | "INACTIVE" | "PAUSED" | "UNKNOWN";
+  label: string;
+  evidenceId: string;
+  advertiserName?: string | null;
+  destinationDomain?: string | null;
+  snippet?: string | null;
+}
+
+export interface AdTimelineYearGroup {
+  year: number | string;
+  entries: AdTimelineEntry[];
+}
+
+export interface AdvertisingTimeline {
+  advertisingSpan: string;
+  firstObserved: string | "HISTORY_UNAVAILABLE";
+  lastObserved: string | "HISTORY_UNAVAILABLE";
+  activeAdCount: number;
+  historicalAdCount: number;
+  uniqueCreativeCount: number;
+  uniqueDestinationDomainCount: number;
+  timelineTree: AdTimelineYearGroup[];
+  allEntries: AdTimelineEntry[];
+}
+
+export interface AdvertisingIntelligence {
+  status: "FOUND" | "NOT_FOUND" | "UNAVAILABLE" | "ERROR";
+  source: "Meta Ad Library / Apify" | "Meta Ad Library" | "Apify";
+  advertiserIdentity: string | null;
+  pageId: string | null;
+  totalAdsDiscovered: number;
+  activeAdCount: number;
+  historicalAdCount: number;
+  firstObserved: string | "HISTORY_UNAVAILABLE";
+  lastObserved: string | "HISTORY_UNAVAILABLE";
+  advertisingSpan: string;
+  platforms: string[];
+  uniqueCreativeCount: number;
+  destinationDomains: string[];
+
+  timeline: AdvertisingTimeline;
+  advertiserMatch: AdvertiserIdentityMatchResult;
+  destinationAnalysis: DestinationDomainAnalysis;
+  creativeHistory: CreativeHistoryAnalysis;
+  instagramCorrelation: AdInstagramCorrelation;
+  websiteCorrelation: AdWebsiteCorrelation;
+  evidenceLedger: AdEvidenceItem[];
+
+  trustSignals: TrustSignal[];
+  riskSignals: TrustSignal[];
+  riskFactors: RiskFactor[];
+  summary: string;
 }
 
 export interface AdvertiserIdentityCheck {
@@ -490,6 +649,8 @@ export interface RiskAnalysisResult {
 export interface VerificationResult {
   evidence: InstagramEvidence;
   meta_ad_evidence?: MetaAdEvidence | null;
+  advertising_intelligence?: AdvertisingIntelligence | null;
+  profile_investigation?: ProfileInvestigation | null;
   ad_claim_analysis?: AdClaimAnalysis | null;
   website_evidence?: WebsiteEvidence | null;
   media_evidence?: MediaEvidence | null;
@@ -505,4 +666,246 @@ export interface VerificationResult {
   risk: RiskAnalysisResult;
   status: "EVIDENCE_COLLECTED" | "INSUFFICIENT_EVIDENCE";
   failure_reason?: string;
+}
+
+// ---------------------------------------------------------------------------
+// PHASE 2: DEEP INSTAGRAM PROFILE INVESTIGATION TYPES
+// ---------------------------------------------------------------------------
+
+export type BioClaimType =
+  | "IDENTITY"
+  | "OCCUPATION"
+  | "COMPANY"
+  | "FOUNDER"
+  | "LOCATION"
+  | "EDUCATION"
+  | "PRODUCT"
+  | "SERVICE"
+  | "WEBSITE"
+  | "CONTACT"
+  | "SOCIAL_HANDLE"
+  | "PROFESSIONAL_CLAIM"
+  | "BUSINESS_CLAIM"
+  | "PROMOTIONAL_CLAIM";
+
+export type BioClaimStatus =
+  | "OBSERVED"
+  | "SUPPORTED"
+  | "INFERRED"
+  | "UNVERIFIED"
+  | "CONTRADICTED"
+  | "UNKNOWN"
+  | "UNAVAILABLE";
+
+export interface BioClaim {
+  claimId: string;
+  claimType: BioClaimType;
+  claimText: string;
+  normalizedValue: string;
+  source: string; // e.g. "Instagram Profile"
+  sourceUrl?: string | null;
+  evidenceId: string; // e.g. "EV-BIO-001"
+  status: BioClaimStatus;
+  confidence: number;
+  verificationReason?: string;
+  supportingSources?: string[];
+}
+
+export interface BioClaimVerificationResult {
+  claim: BioClaim;
+  status: BioClaimStatus;
+  checkedSources: string[];
+  matchingEvidenceIds: string[];
+  explanation: string;
+}
+
+export type ProfileLinkPlatform =
+  | "github"
+  | "linkedin"
+  | "youtube"
+  | "twitter_x"
+  | "personal_website"
+  | "company_website"
+  | "portfolio"
+  | "linktree"
+  | "contact_email"
+  | "contact_phone"
+  | "other";
+
+export interface ExternalProfileLink {
+  originalUrl: string;
+  normalizedUrl: string;
+  domain: string;
+  platform: ProfileLinkPlatform;
+  source: string;
+  evidenceId: string; // e.g. "EV-LINK-001"
+  accessible?: boolean;
+  title?: string | null;
+}
+
+export type HighlightCategory =
+  | "About"
+  | "Work"
+  | "Projects"
+  | "Clients"
+  | "Reviews"
+  | "Products"
+  | "Services"
+  | "Testimonials"
+  | "Contact"
+  | "Business"
+  | "Portfolio"
+  | "General";
+
+export interface ProfileHighlight {
+  highlightId: string;
+  title: string;
+  sourceUrl?: string | null;
+  category: HighlightCategory;
+  visibleContent: string[];
+  extractedClaims: string[];
+  entities: string[];
+  productsServices: string[];
+  evidenceIds: string[]; // e.g. ["EV-HIGHLIGHT-001"]
+  capturedAt: string;
+  status: "ACCESSIBLE" | "HIGHLIGHTS_UNAVAILABLE" | "EMPTY";
+}
+
+export interface ProfilePostSample {
+  postId: string;
+  postUrl: string;
+  timestamp?: string | null;
+  mediaType: "image" | "video" | "reel" | "carousel" | "unknown";
+  caption: string | null;
+  visibleEngagement?: {
+    likes?: number | null;
+    comments?: number | null;
+    views?: number | null;
+  };
+  hashtags: string[];
+  mentions: string[];
+  productServiceClaims: string[];
+  businessClaims: string[];
+  topics: string[];
+  commercialSignals: string[];
+  evidenceIds: string[]; // e.g. ["EV-POST-001"]
+}
+
+export interface ContentBioConsistency {
+  status: "SUPPORTED" | "PARTIAL" | "UNKNOWN" | "CONTRADICTED";
+  matchingTopics: string[];
+  discrepancies: string[];
+  evidenceIds: string[];
+  explanation: string;
+}
+
+export interface ProfileScoreDimension {
+  name: string;
+  category:
+    | "Identity Consistency"
+    | "Profile Completeness"
+    | "Bio Evidence"
+    | "External Identity"
+    | "Content Consistency"
+    | "Highlights"
+    | "Advertising"
+    | "Behavioural Signals";
+  maxScore: number;
+  earnedScore: number;
+  evidenceIds: string[];
+  explanation: string;
+  isNeutral: boolean;
+}
+
+export interface ProfileInvestigationConfig {
+  maxPostsToInspect?: number; // default: 12
+  investigateHighlights?: boolean; // default: true
+  investigateExternalLinks?: boolean; // default: true
+  evidenceSamplingLimits?: {
+    maxBioClaims?: number;
+    maxLinks?: number;
+    maxHighlights?: number;
+  };
+}
+
+export interface ProfileEvidenceItem {
+  id: string; // e.g. "EV-PROFILE-001", "EV-BIO-001", "EV-LINK-001", "EV-POST-001", "EV-HIGHLIGHT-001"
+  source: string;
+  sourceUrl?: string | null;
+  sourceType: string;
+  sourceLocation: string;
+  observedText: string;
+  observedValue?: string | null;
+  claim?: string | null;
+  evidenceType: string;
+  status: "OBSERVED" | "SUPPORTED" | "INFERRED" | "UNVERIFIED" | "CONTRADICTED" | "UNKNOWN" | "UNAVAILABLE";
+  confidence: number;
+  capturedAt: string;
+  trustImpact: number;
+  riskImpact: number;
+  supportingEvidenceIds: string[];
+  contradictingEvidenceIds: string[];
+}
+
+export interface SidePanelDimensionSummary {
+  score: number;
+  maxScore: number;
+  percentage: number;
+  evidence: string[];
+}
+
+export interface SidePanelPayload {
+  profile: {
+    username: string;
+    displayName?: string | null;
+    bio?: string | null;
+    profileUrl: string;
+    verifiedStatus: "VERIFIED" | "UNVERIFIED" | "UNKNOWN";
+  };
+  score: number;
+  riskLevel: RiskLevel;
+  confidence: number;
+  evidenceCoverage: number;
+  dimensions: {
+    identity: SidePanelDimensionSummary;
+    bio: SidePanelDimensionSummary;
+    content: SidePanelDimensionSummary;
+    externalIdentity: SidePanelDimensionSummary;
+    advertising: SidePanelDimensionSummary;
+  };
+  evidence: ProfileEvidenceItem[];
+  unknowns: string[];
+  warnings: string[];
+}
+
+export interface ProfileInvestigation {
+  username: string | null;
+  profileUrl: string;
+  displayName: string | null;
+  bio: string | null;
+  rawBio: string | null;
+  profilePictureUrl: string | null;
+  followerCount: number | null;
+  followingCount: number | null;
+  postCount: number | null;
+  verifiedStatus: "VERIFIED" | "UNVERIFIED" | "UNKNOWN";
+  accountCategory: string | null;
+  externalLinks: ExternalProfileLink[];
+  contactInformation: {
+    email: string | null;
+    phone: string | null;
+    address: string | null;
+  };
+  profileClaims: BioClaim[];
+  claimVerifications: BioClaimVerificationResult[];
+  highlights: ProfileHighlight[];
+  posts: ProfilePostSample[];
+  identitySignals: string[];
+  contentBioConsistency: ContentBioConsistency;
+  evidence: ProfileEvidenceItem[];
+  dimensions: ProfileScoreDimension[];
+  overallScore: number;
+  investigationStatus: "COMPLETED" | "PARTIAL" | "UNAVAILABLE" | "ERROR";
+  capturedAt: string;
+  sidePanelData: SidePanelPayload;
 }

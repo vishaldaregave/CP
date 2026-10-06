@@ -9,6 +9,7 @@ import type {
   ImageCrossCheckResult,
   MetaAdEvidence,
   AdClaimAnalysis,
+  AdvertisingIntelligence,
   TrustMatrix,
   RiskAnalysisResult,
   RiskLevel,
@@ -30,6 +31,7 @@ export function calculateEvidenceCoverage(
   sellerIdentity?: SellerIdentityGraph | null,
   productConsistency?: ProductConsistencyReport | null,
   postPurchase?: PostPurchaseComparisonResult | null,
+  adIntelligence?: AdvertisingIntelligence | null,
 ): number {
   let availableWeight = 0;
   let totalWeight = 0;
@@ -64,9 +66,9 @@ export function calculateEvidenceCoverage(
     availableWeight += 15;
   }
 
-  // 6. Meta Ad Library (10 pts)
+  // 6. Meta Ad Library / Advertising Intelligence (10 pts)
   totalWeight += 10;
-  if (metaAd && metaAd.status === "found") {
+  if ((metaAd && metaAd.status === "found") || (adIntelligence && adIntelligence.status === "FOUND")) {
     availableWeight += 10;
   }
 
@@ -87,7 +89,7 @@ export function calculateEvidenceCoverage(
 
 /**
  * Evaluates risk and calculated confidence based on multi-source evidence,
- * normalized trust matrix, seller identity graph, and cross-source consistency checks.
+ * normalized trust matrix, seller identity graph, advertising intelligence, and cross-source consistency checks.
  */
 export function evaluateRisk(
   evidence: InstagramEvidence,
@@ -104,6 +106,7 @@ export function evaluateRisk(
   sellerIdentity?: SellerIdentityGraph | null,
   productConsistency?: ProductConsistencyReport | null,
   postPurchase?: PostPurchaseComparisonResult | null,
+  adIntelligence?: AdvertisingIntelligence | null,
 ): RiskAnalysisResult {
   const hasCaption = Boolean(evidence.post?.caption);
   const hasUsername = Boolean(evidence.account?.username);
@@ -204,32 +207,38 @@ export function evaluateRisk(
   // ---------------------------------------------------------------------------
   // 2. ADVERTISING & PRESSURE RISK FACTORS
   // ---------------------------------------------------------------------------
-  if (adClaims && adClaims.ad_pressure_signals && adClaims.ad_pressure_signals.length > 0) {
-    for (const sig of adClaims.ad_pressure_signals) {
-      const isUrgency = sig.type === "urgency" || sig.type === "scarcity";
-      const isExtremeDiscount = sig.type === "price_anchoring" || sig.text.includes("90%") || sig.text.includes("80%");
-      const severity = isExtremeDiscount ? "medium" : isUrgency ? "medium" : "low";
+  if (adIntelligence && adIntelligence.riskFactors && adIntelligence.riskFactors.length > 0) {
+    for (const rf of adIntelligence.riskFactors) {
+      risk_factors.push(rf);
+    }
+  } else {
+    if (adClaims && adClaims.ad_pressure_signals && adClaims.ad_pressure_signals.length > 0) {
+      for (const sig of adClaims.ad_pressure_signals) {
+        const isUrgency = sig.type === "urgency" || sig.type === "scarcity";
+        const isExtremeDiscount = sig.type === "price_anchoring" || sig.text.includes("90%") || sig.text.includes("80%");
+        const severity = isExtremeDiscount ? "medium" : isUrgency ? "medium" : "low";
 
+        risk_factors.push({
+          severity,
+          category: "ADVERTISING",
+          title: isExtremeDiscount ? "Extreme Discount / Price Anchoring" : `${sig.type.toUpperCase()} Pressure Pattern`,
+          explanation: sig.meaning || `Advertisement uses promotional pressure: "${sig.text}"`,
+          evidence: sig.text,
+          sources: [sig.source === "meta_ad" ? "meta_ad" : "instagram"],
+        });
+      }
+    }
+
+    if (metaAd && metaAd.status === "found" && metaAd.ads && metaAd.ads.length > 0) {
       risk_factors.push({
-        severity,
+        severity: "positive",
         category: "ADVERTISING",
-        title: isExtremeDiscount ? "Extreme Discount / Price Anchoring" : `${sig.type.toUpperCase()} Pressure Pattern`,
-        explanation: sig.meaning || `Advertisement uses promotional pressure: "${sig.text}"`,
-        evidence: sig.text,
-        sources: [sig.source === "meta_ad" ? "meta_ad" : "instagram"],
+        title: "Active Meta Advertising History",
+        explanation: `Advertiser has run ${metaAd.ads.length} campaign(s) in Meta Ad Library. Note: Ad existence indicates active marketing, not proof of authenticity.`,
+        evidence: `Found ${metaAd.ads.length} public ads`,
+        sources: ["meta_ad"],
       });
     }
-  }
-
-  if (metaAd && metaAd.status === "found" && metaAd.ads && metaAd.ads.length > 0) {
-    risk_factors.push({
-      severity: "positive",
-      category: "ADVERTISING",
-      title: "Active Meta Advertising History",
-      explanation: `Advertiser has run ${metaAd.ads.length} campaign(s) in Meta Ad Library. Note: Ad existence indicates active marketing, not proof of authenticity.`,
-      evidence: `Found ${metaAd.ads.length} public ads`,
-      sources: ["meta_ad"],
-    });
   }
 
   // ---------------------------------------------------------------------------
@@ -435,6 +444,7 @@ export function evaluateRisk(
     sellerIdentity,
     productConsistency,
     postPurchase,
+    adIntelligence,
   );
 
   // Recommendation construction

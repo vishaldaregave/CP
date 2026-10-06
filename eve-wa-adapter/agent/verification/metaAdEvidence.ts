@@ -6,6 +6,7 @@ import type {
   ProductInfo,
   SellerInfo,
 } from "./types.ts";
+import { extractDomain } from "./advertisingIntelligence.ts";
 
 function cleanHandle(handle?: string | null): string | null {
   if (!handle) return null;
@@ -14,8 +15,87 @@ function cleanHandle(handle?: string | null): string | null {
 }
 
 /**
- * Searches the official Meta Ad Library API for active or historical advertising records
- * associated with the seller identity, page, brand, or product.
+ * Normalizes an ad record from either Meta Graph API, Apify actor output, or raw dataset item.
+ */
+export function normalizeApifyOrMetaRecord(raw: any, sourceTag?: "meta_ad_library" | "apify" | "meta_ad_library_apify"): MetaAdRecord {
+  const libraryId = String(raw.id || raw.ad_id || raw.adId || raw.ad_archive_id || raw.archive_id || `AD-${Date.now()}`);
+  const advertiserName = raw.page_name || raw.pageName || raw.advertiser_name || raw.advertiserName || null;
+  const advertiserPageId = raw.page_id ? String(raw.page_id) : raw.pageId ? String(raw.pageId) : null;
+
+  // Platforms
+  let publisherPlatforms: string[] = ["INSTAGRAM"];
+  if (Array.isArray(raw.publisher_platforms) && raw.publisher_platforms.length > 0) {
+    publisherPlatforms = raw.publisher_platforms;
+  } else if (Array.isArray(raw.publisherPlatforms) && raw.publisherPlatforms.length > 0) {
+    publisherPlatforms = raw.publisherPlatforms;
+  }
+
+  // Delivery start / First observed date (never fabricate)
+  let deliveryStart: string | null = null;
+  const rawStart = raw.ad_delivery_start_time || raw.startDate || raw.start_date || raw.deliveryStart || raw.firstObservedDate;
+  if (rawStart) {
+    deliveryStart = String(rawStart).split("T")[0];
+  }
+
+  // Delivery end / Last observed date (never fabricate)
+  let deliveryEnd: string | null = "Active";
+  const rawEnd = raw.ad_delivery_stop_time || raw.endDate || raw.end_date || raw.deliveryEnd || raw.lastObservedDate;
+  if (rawEnd) {
+    deliveryEnd = String(rawEnd).split("T")[0];
+  } else if (raw.is_active === false || raw.isActive === false || raw.status === "INACTIVE") {
+    deliveryEnd = deliveryStart || "Inactive";
+  }
+
+  // Ad text & titles
+  const bodies = raw.ad_creative_bodies || (raw.body ? [raw.body] : []) || (raw.adText ? [raw.adText] : []);
+  const adText = Array.isArray(bodies) ? bodies.filter(Boolean).join("\n") || null : String(bodies || "");
+  const titles = raw.ad_creative_link_titles || (raw.title ? [raw.title] : []) || (raw.linkTitle ? [raw.linkTitle] : []);
+  const linkTitle = Array.isArray(titles) ? titles[0] || null : String(titles || "");
+  const descs = raw.ad_creative_link_descriptions || (raw.description ? [raw.description] : []) || (raw.linkDescription ? [raw.linkDescription] : []);
+  const linkDescription = Array.isArray(descs) ? descs[0] || null : String(descs || "");
+
+  // Snapshot & Destination URLs
+  const adSnapshotUrl = raw.ad_snapshot_url || raw.snapshot_url || raw.snapshotUrl || raw.adSnapshotUrl || null;
+  const destinationUrl = (Array.isArray(raw.ad_creative_link_captions) && raw.ad_creative_link_captions[0]) ||
+    raw.destinationUrl || raw.destination_url || raw.link_url || raw.linkUrl || raw.link || null;
+  const destinationDomain = extractDomain(destinationUrl);
+
+  const isOngoing = !deliveryEnd || /active|ongoing|present/i.test(deliveryEnd);
+  const adStatus: "ACTIVE" | "INACTIVE" | "PAUSED" | "UNKNOWN" =
+    raw.status === "PAUSED" ? "PAUSED" : isOngoing ? "ACTIVE" : "INACTIVE";
+
+  const claims: string[] = [];
+  if (adText && /100%|guarantee|warranty|certified|fda|fssai|iso|discount|sale/i.test(adText)) {
+    const matched = adText.match(/(?:100%\s*[a-z]+|\d+%\s*off|money back guarantee|certified [a-z0-9]+)/gi);
+    if (matched) {
+      for (const m of matched) claims.push(m);
+    }
+  }
+
+  return {
+    libraryId,
+    adId: libraryId,
+    advertiserName,
+    advertiserPageId,
+    publisherPlatforms,
+    deliveryStart,
+    deliveryEnd,
+    adText: adText || null,
+    linkTitle: linkTitle || null,
+    linkDescription: linkDescription || null,
+    adSnapshotUrl,
+    destinationUrl: destinationUrl || null,
+    destinationDomain,
+    adStatus,
+    firstObservedDate: deliveryStart,
+    lastObservedDate: isOngoing ? null : deliveryEnd,
+    claims,
+    evidenceSource: sourceTag || "meta_ad_library",
+  };
+}
+
+/**
+ * Searches the official Meta Ad Library API or Apify Meta Ads Scraper for active or historical advertising records.
  *
  * Implements priority-based query strategy:
  * 1. Known Meta/Facebook Page ID if already available
@@ -31,7 +111,7 @@ export async function collectMetaAdEvidence(
   product?: ProductInfo,
   seller?: SellerInfo,
 ): Promise<MetaAdEvidence> {
-  const token = process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  const token = process.env.META_AD_LIBRARY_ACCESS_TOKEN || process.env.APIFY_API_TOKEN || process.env.APIFY_TOKEN;
   const country = process.env.META_AD_LIBRARY_COUNTRY || "IN";
   const apiVersion = process.env.META_API_VERSION || "v20.0";
   const collectedAt = new Date().toISOString();
@@ -45,14 +125,12 @@ export async function collectMetaAdEvidence(
   let pageId: string | null = null;
 
   if ("source" in inputOrEvidence) {
-    // InstagramEvidence object passed
     instagramUrl = inputOrEvidence.source?.url || "";
     instagramHandle = cleanHandle(inputOrEvidence.account?.username);
     sellerName = seller?.name || inputOrEvidence.seller?.name || inputOrEvidence.account?.display_name || null;
     brandName = product?.brand || inputOrEvidence.product?.brand || null;
     productName = product?.name || inputOrEvidence.product?.name || null;
   } else {
-    // MetaAdCollectionInput object passed
     instagramUrl = inputOrEvidence.instagramUrl || "";
     instagramHandle = cleanHandle(inputOrEvidence.instagramHandle);
     sellerName = inputOrEvidence.sellerName || seller?.name || null;
@@ -62,11 +140,6 @@ export async function collectMetaAdEvidence(
   }
 
   // Build candidate search terms with strict prioritization
-  // 1. Page ID (if present)
-  // 2. Seller display name
-  // 3. Instagram handle without @
-  // 4. Brand name
-  // 5. Product name
   const candidateTerms: string[] = [];
   const candidatePageIds: string[] = [];
 
@@ -88,7 +161,6 @@ export async function collectMetaAdEvidence(
   }
 
   if (productName && productName.trim().length > 3 && !candidateTerms.includes(productName.trim())) {
-    // Only search by product name if terms list is small, prioritizing seller identity
     if (candidateTerms.length < 3) {
       candidateTerms.push(productName.trim());
     }
@@ -169,41 +241,13 @@ export async function collectMetaAdEvidence(
       }
 
       hadSuccessfulQuery = true;
-      const data = (await res.json()) as {
-        data?: Array<{
-          id?: string;
-          page_id?: string;
-          page_name?: string;
-          publisher_platforms?: string[];
-          ad_delivery_start_time?: string;
-          ad_delivery_stop_time?: string;
-          ad_creative_bodies?: string[];
-          ad_creative_link_titles?: string[];
-          ad_creative_link_descriptions?: string[];
-          ad_creative_link_captions?: string[];
-          ad_snapshot_url?: string;
-        }>;
-      };
+      const data = (await res.json()) as { data?: any[] };
 
       if (data.data && data.data.length > 0) {
         for (const item of data.data) {
-          if (item.id && !seenAdIds.has(item.id)) {
-            seenAdIds.add(item.id);
-            const bodies = item.ad_creative_bodies || [];
-            allFoundAds.push({
-              libraryId: item.id,
-              advertiserName: item.page_name || null,
-              advertiserPageId: item.page_id || null,
-              publisherPlatforms: item.publisher_platforms || ["INSTAGRAM"],
-              deliveryStart: item.ad_delivery_start_time ? item.ad_delivery_start_time.split("T")[0] : null,
-              deliveryEnd: item.ad_delivery_stop_time ? item.ad_delivery_stop_time.split("T")[0] : "Active",
-              adText: bodies.filter(Boolean).join("\n") || null,
-              linkTitle: item.ad_creative_link_titles?.[0] || null,
-              linkDescription: item.ad_creative_link_descriptions?.[0] || null,
-              adSnapshotUrl: item.ad_snapshot_url || null,
-              destinationUrl: item.ad_creative_link_captions?.[0] || null,
-              evidenceSource: "meta_ad_library",
-            });
+          if (item.id && !seenAdIds.has(String(item.id))) {
+            seenAdIds.add(String(item.id));
+            allFoundAds.push(normalizeApifyOrMetaRecord(item, "meta_ad_library"));
           }
         }
       }
@@ -253,41 +297,13 @@ export async function collectMetaAdEvidence(
       }
 
       hadSuccessfulQuery = true;
-      const data = (await res.json()) as {
-        data?: Array<{
-          id?: string;
-          page_id?: string;
-          page_name?: string;
-          publisher_platforms?: string[];
-          ad_delivery_start_time?: string;
-          ad_delivery_stop_time?: string;
-          ad_creative_bodies?: string[];
-          ad_creative_link_titles?: string[];
-          ad_creative_link_descriptions?: string[];
-          ad_creative_link_captions?: string[];
-          ad_snapshot_url?: string;
-        }>;
-      };
+      const data = (await res.json()) as { data?: any[] };
 
       if (data.data && data.data.length > 0) {
         for (const item of data.data) {
-          if (item.id && !seenAdIds.has(item.id)) {
-            seenAdIds.add(item.id);
-            const bodies = item.ad_creative_bodies || [];
-            allFoundAds.push({
-              libraryId: item.id,
-              advertiserName: item.page_name || null,
-              advertiserPageId: item.page_id || null,
-              publisherPlatforms: item.publisher_platforms || ["INSTAGRAM"],
-              deliveryStart: item.ad_delivery_start_time ? item.ad_delivery_start_time.split("T")[0] : null,
-              deliveryEnd: item.ad_delivery_stop_time ? item.ad_delivery_stop_time.split("T")[0] : "Active",
-              adText: bodies.filter(Boolean).join("\n") || null,
-              linkTitle: item.ad_creative_link_titles?.[0] || null,
-              linkDescription: item.ad_creative_link_descriptions?.[0] || null,
-              adSnapshotUrl: item.ad_snapshot_url || null,
-              destinationUrl: item.ad_creative_link_captions?.[0] || null,
-              evidenceSource: "meta_ad_library",
-            });
+          if (item.id && !seenAdIds.has(String(item.id))) {
+            seenAdIds.add(String(item.id));
+            allFoundAds.push(normalizeApifyOrMetaRecord(item, "meta_ad_library"));
           }
         }
       }

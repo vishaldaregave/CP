@@ -7,6 +7,7 @@ import type {
   MatrixFieldResult,
   MetaAdEvidence,
   AdClaimAnalysis,
+  AdvertisingIntelligence,
 } from "./types.ts";
 
 export interface ReportSourceInfo {
@@ -77,6 +78,7 @@ export interface VerificationReportData {
   risk: ReportRiskSummary;
   evidence: ReportEvidenceSummary;
   meta_ad_details?: MetaAdEvidence | null;
+  advertising_intelligence?: AdvertisingIntelligence | null;
   ad_claim_analysis?: AdClaimAnalysis | null;
   source_overview: {
     instagram: "AVAILABLE" | "UNAVAILABLE";

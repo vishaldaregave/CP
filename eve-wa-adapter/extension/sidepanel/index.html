@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Veriqoo — Instagram Trust Intelligence</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="panel-container">
+    <!-- Header -->
+    <header class="panel-header">
+      <div class="logo-row">
+        <div class="logo-badge">🛡️</div>
+        <div class="brand-title">VERIQOO</div>
+      </div>
+      <div class="brand-subtitle">Instagram Trust Intelligence</div>
+    </header>
+
+    <!-- Content Area -->
+    <main class="panel-main">
+      <!-- State 1: IDLE / No Profile Detected -->
+      <section id="state-idle" class="state-card visible">
+        <div class="idle-icon-wrapper">
+          <span class="idle-icon">🔍</span>
+        </div>
+        <h2 class="idle-title">No Instagram profile detected</h2>
+        <p class="idle-desc">
+          Open a public Instagram profile (e.g. <code>instagram.com/username/</code>) to begin an investigation.
+        </p>
+      </section>
+
+      <!-- State 2: Profile Detected -->
+      <section id="state-detected" class="state-card hidden">
+        <div class="profile-card">
+          <div class="avatar-wrapper">
+            <img id="avatar-img" class="avatar-img hidden" alt="Profile" />
+            <div id="avatar-placeholder" class="avatar-placeholder">
+              <span id="avatar-initial">@</span>
+            </div>
+          </div>
+          <div class="profile-info">
+            <div class="name-row">
+              <span id="profile-display-name" class="profile-display-name"></span>
+              <span id="profile-verified-badge" class="verified-badge hidden" title="Verified Account">✓</span>
+            </div>
+            <h2 id="profile-handle" class="profile-username">@username</h2>
+            <div id="profile-category" class="profile-category hidden"></div>
+          </div>
+        </div>
+
+        <!-- Bio Container -->
+        <div id="bio-container" class="bio-container hidden">
+          <div class="bio-header">PUBLIC BIO</div>
+          <div id="bio-text" class="bio-text"></div>
+        </div>
+
+        <!-- External Link Preview -->
+        <div id="link-container" class="link-container hidden">
+          <span class="link-icon">🔗</span>
+          <a id="profile-ext-link" class="profile-ext-link" href="#" target="_blank" rel="noopener"></a>
+        </div>
+
+        <!-- Stats Row -->
+        <div id="stats-row" class="stats-row hidden">
+          <div class="stat-box">
+            <div id="stat-followers" class="stat-value">-</div>
+            <div class="stat-label">Followers</div>
+          </div>
+          <div class="stat-box">
+            <div id="stat-following" class="stat-value">-</div>
+            <div class="stat-label">Following</div>
+          </div>
+          <div class="stat-box">
+            <div id="stat-posts" class="stat-value">-</div>
+            <div class="stat-label">Posts</div>
+          </div>
+        </div>
+
+        <!-- Highlights Preview -->
+        <div id="highlights-container" class="highlights-container hidden">
+          <div class="highlights-header">
+            <span>PUBLIC HIGHLIGHTS</span>
+            <span id="highlights-count-badge" class="highlights-count-badge">0 / 20</span>
+          </div>
+          <div id="highlights-list" class="highlights-list"></div>
+        </div>
+
+        <!-- Posts Sample Preview -->
+        <div id="posts-container" class="posts-container hidden">
+          <div class="posts-header">
+            <span>PUBLIC POSTS &amp; REELS</span>
+            <span id="posts-count-badge" class="posts-count-badge">0</span>
+          </div>
+          <div id="posts-list" class="posts-list"></div>
+        </div>
+
+        <div class="status-badge-row">
+          <span class="status-indicator"></span>
+          <span id="status-text" class="status-label">Ready to investigate</span>
+        </div>
+
+        <div class="action-section">
+          <button id="btn-verify" class="btn-primary">
+            VERIFY WITH VERIQOO
+          </button>
+        </div>
+
+        <div id="phase-notice" class="phase-notice hidden">
+          <div class="notice-icon">ℹ️</div>
+          <div class="notice-text">
+            Profile investigation pipeline will be connected in Phase 3.5.
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="panel-footer">
+      <span>Veriqoo v0.1.0 • Foundation Preview</span>
+    </footer>
+  </div>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

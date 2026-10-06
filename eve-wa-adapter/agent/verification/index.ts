@@ -18,5 +18,15 @@ export * from "./trustMatrix.ts";
 export * from "./reportTypes.ts";
 export * from "./reportGenerator.ts";
 export * from "./metaAdEvidence.ts";
+export * from "./advertisingIntelligence.ts";
 export * from "./adClaimAnalyzer.ts";
+export * from "./bioInvestigator.ts";
+export * from "./externalLinks.ts";
+export * from "./highlightsInvestigator.ts";
+export * from "./contentInvestigator.ts";
+export * from "./profileScoring.ts";
+export * from "./profileInvestigator.ts";
 export * from "./orchestrator.ts";
+export * from "./apiTypes.ts";
+export * from "./apiServer.ts";
+

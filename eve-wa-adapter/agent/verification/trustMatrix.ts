@@ -5,6 +5,7 @@ import type {
   MediaEvidence,
   MetaAdEvidence,
   AdClaimAnalysis,
+  AdvertisingIntelligence,
   TrustMatrix,
   MatrixFieldResult,
   TrustSignal,
@@ -111,6 +112,7 @@ export function buildTrustMatrix(
   media: MediaEvidence | null,
   metaAd?: MetaAdEvidence | null,
   adClaims?: AdClaimAnalysis | null,
+  adIntelligence?: AdvertisingIntelligence | null,
 ): TrustMatrix {
   const fields: Record<string, MatrixFieldResult> = {
     brand: evaluateFieldConsistency("brand", normalized.brand),
@@ -176,7 +178,11 @@ export function buildTrustMatrix(
   }
 
   // Meta Advertiser ↔ Instagram Account Alignment
-  if (metaAd?.status === "found" && metaAd.advertiserName) {
+  if (adIntelligence?.trustSignals) {
+    for (const ts of adIntelligence.trustSignals) {
+      trust_signals.push(ts);
+    }
+  } else if (metaAd?.status === "found" && metaAd.advertiserName) {
     const cleanAdName = cleanStr(metaAd.advertiserName);
     const cleanInsta = cleanStr(evidence.account.username || "");
     const cleanDisplay = cleanStr(evidence.account.display_name || "");
@@ -254,22 +260,29 @@ export function buildTrustMatrix(
     });
   }
 
-  // Check Meta Advertiser vs Website Company Contradiction
-  if (
-    metaAd?.status === "found" &&
-    metaAd.advertiserName &&
-    website?.status === "accessible" &&
-    website.company.name &&
-    cleanStr(metaAd.advertiserName) !== cleanStr(website.company.name) &&
-    !cleanStr(metaAd.advertiserName).includes(cleanStr(website.company.name)) &&
-    !cleanStr(website.company.name).includes(cleanStr(metaAd.advertiserName))
-  ) {
-    risk_signals.push({
-      signal: `Meta advertiser and external website business identities are inconsistent: advertiser (${metaAd.advertiserName}) vs website company (${website.company.name})`,
-      severity: "medium",
-      sources: ["meta_ad", "website"],
-      meaning: "Meta Ad is operated under a different entity name than the linked web store",
-    });
+  // Advertising Intelligence Risk / Anomaly Signals
+  if (adIntelligence?.riskSignals) {
+    for (const rs of adIntelligence.riskSignals) {
+      risk_signals.push(rs);
+    }
+  } else {
+    // Check Meta Advertiser vs Website Company Contradiction
+    if (
+      metaAd?.status === "found" &&
+      metaAd.advertiserName &&
+      website?.status === "accessible" &&
+      website.company.name &&
+      cleanStr(metaAd.advertiserName) !== cleanStr(website.company.name) &&
+      !cleanStr(metaAd.advertiserName).includes(cleanStr(website.company.name)) &&
+      !cleanStr(website.company.name).includes(cleanStr(metaAd.advertiserName))
+    ) {
+      risk_signals.push({
+        signal: `Meta advertiser and external website business identities are inconsistent: advertiser (${metaAd.advertiserName}) vs website company (${website.company.name})`,
+        severity: "medium",
+        sources: ["meta_ad", "website"],
+        meaning: "Meta Ad is operated under a different entity name than the linked web store",
+      });
+    }
   }
 
   // Pack size / quantity contradiction check
