@@ -237,7 +237,7 @@ export async function verifyInstagramProduct(
   const tClaimStart = Date.now();
   console.info(`[VERIFY TIMING] AD_CLAIM_ANALYSIS_START`);
   console.info(`[VERIFY LIVE 028] AD_CLAIM_ANALYSIS_START`);
-  const adTexts = (meta_ad_evidence?.ads || []).map((a) => [a.adText, a.linkTitle, a.linkDescription].filter(Boolean).join("\n"));
+  const adTexts = (meta_ad_evidence?.ads || []).map((a) => [a.creative.primary_text, a.creative.headline, a.creative.description].filter(Boolean).join("\n"));
   const textForClaimAnalysis = [
     evidence.post.caption,
     ...adTexts,
