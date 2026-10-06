@@ -1,11 +1,11 @@
-import type {
-  ExtensionMessage,
-  ExtensionState,
-  DetectedInstagramProfile,
-  InstagramProfileData,
-} from "../shared/types.ts";
-import { detectInstagramProfileFromUrl } from "../shared/profileDetector.ts";
-import { requestProfileInvestigation, DEFAULT_API_BASE_URL } from "../shared/apiClient.ts";
+             
+                   
+                 
+                           
+                       
+                            
+import { detectInstagramProfileFromUrl } from "../shared/profileDetector.js";
+import { requestProfileInvestigation, DEFAULT_API_BASE_URL } from "../shared/apiClient.js";
 
 // DOM Elements
 const stateIdle = document.getElementById("state-idle");
@@ -21,14 +21,14 @@ const profileDisplayName = document.getElementById("profile-display-name");
 const profileVerifiedBadge = document.getElementById("profile-verified-badge");
 const profileCategory = document.getElementById("profile-category");
 const avatarInitial = document.getElementById("avatar-initial");
-const avatarImg = document.getElementById("avatar-img") as HTMLImageElement | null;
+const avatarImg = document.getElementById("avatar-img")                           ;
 const avatarPlaceholder = document.getElementById("avatar-placeholder");
 
 const bioContainer = document.getElementById("bio-container");
 const bioText = document.getElementById("bio-text");
 
 const linkContainer = document.getElementById("link-container");
-const profileExtLink = document.getElementById("profile-ext-link") as HTMLAnchorElement | null;
+const profileExtLink = document.getElementById("profile-ext-link")                            ;
 
 const statsRow = document.getElementById("stats-row");
 const statFollowers = document.getElementById("stat-followers");
@@ -53,17 +53,17 @@ const resRiskBadge = document.getElementById("res-risk-badge");
 const resConfidence = document.getElementById("res-confidence");
 const resCoverage = document.getElementById("res-coverage");
 const btnOpenPdf = document.getElementById("btn-open-pdf");
-const linkDownloadPdf = document.getElementById("btn-download-pdf") as HTMLAnchorElement | null;
+const linkDownloadPdf = document.getElementById("btn-download-pdf")                            ;
 const pdfPathText = document.getElementById("pdf-path-text");
 const dimensionsList = document.getElementById("dimensions-list");
 const evidenceList = document.getElementById("evidence-list");
 const btnReinvestigate = document.getElementById("btn-reinvestigate");
 
-let currentProfile: DetectedInstagramProfile | null = null;
-let currentData: InstagramProfileData | null = null;
-let currentInvestigationResult: any | null = null;
+let currentProfile                                  = null;
+let currentData                              = null;
+let currentInvestigationResult             = null;
 
-function formatCountDisplay(val: number | null | undefined): string {
+function formatCountDisplay(val                           )         {
   if (val === null || val === undefined) return "-";
   if (val >= 1000000) {
     return (val / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
@@ -77,7 +77,7 @@ function formatCountDisplay(val: number | null | undefined): string {
 /**
  * Renders the Idle state adaptively based on current tab location.
  */
-function renderIdle(context: "not_instagram" | "instagram_feed" | "general" = "general") {
+function renderIdle(context                                                 = "general") {
   currentProfile = null;
   currentData = null;
   currentInvestigationResult = null;
@@ -113,7 +113,7 @@ function renderIdle(context: "not_instagram" | "instagram_feed" | "general" = "g
 /**
  * Renders the Detected Profile state with genuinely extracted metadata (no hallucination).
  */
-function renderDetected(profile: DetectedInstagramProfile, data?: InstagramProfileData | null) {
+function renderDetected(profile                          , data                              ) {
   currentProfile = profile;
   currentData = data || null;
 
@@ -273,7 +273,7 @@ function renderDetected(profile: DetectedInstagramProfile, data?: InstagramProfi
 /**
  * Renders the Investigation Results view with publication-grade PDF actions.
  */
-function renderResults(result: any) {
+function renderResults(result     ) {
   currentInvestigationResult = result;
 
   stateIdle?.classList.remove("visible");
@@ -318,7 +318,7 @@ function renderResults(result: any) {
   if (dimensionsList) {
     dimensionsList.innerHTML = "";
     const dimMap = result.score?.dimensions || {};
-    const dimMaxScores: Record<string, number> = {
+    const dimMaxScores                         = {
       identityConsistency: 20,
       profileCompleteness: 10,
       bioEvidence: 15,
@@ -329,7 +329,7 @@ function renderResults(result: any) {
       behaviouralSignals: 5,
     };
 
-    const dimLabels: Record<string, string> = {
+    const dimLabels                         = {
       identityConsistency: "Identity Consistency",
       profileCompleteness: "Profile Completeness",
       bioEvidence: "Bio Evidence",
@@ -363,7 +363,7 @@ function renderResults(result: any) {
   // Evidence Ledger
   if (evidenceList) {
     evidenceList.innerHTML = "";
-    const evidenceItems: any[] = result.evidence || [];
+    const evidenceItems        = result.evidence || [];
     if (evidenceItems.length === 0) {
       evidenceList.innerHTML = `<div style="color: var(--text-secondary); font-size: 11px;">No evidence captured</div>`;
     } else {
@@ -392,7 +392,7 @@ async function startVerification() {
   investigatingLoader?.classList.remove("hidden");
   btnVerify?.setAttribute("disabled", "true");
 
-  const payload: InstagramProfileData = currentData || {
+  const payload                       = currentData || {
     username: currentProfile.username,
     profileUrl: currentProfile.profileUrl,
     displayName: currentProfile.username,
@@ -414,7 +414,7 @@ async function startVerification() {
   try {
     const result = await requestProfileInvestigation(payload);
     renderResults(result);
-  } catch (err: any) {
+  } catch (err     ) {
     console.error("[Veriqoo Sidepanel] Investigation error:", err);
     alert(`Investigation failed: ${err.message}\nMake sure 'npm run start:api' is running.`);
   } finally {
@@ -442,7 +442,7 @@ async function hydrateState() {
 
     // Tab is on Instagram profile: check storage for existing captured data or investigation
     const stored = await chrome.storage.local.get("veriqooState");
-    const state: ExtensionState | undefined = stored?.veriqooState;
+    const state                             = stored?.veriqooState;
 
     if (state?.status === "COMPLETE" && state.investigationResult && state.profile?.username === detected.username) {
       renderResults(state.investigationResult);
@@ -458,7 +458,7 @@ async function hydrateState() {
 }
 
 // Listen for messages from content script and service worker
-chrome.runtime.onMessage.addListener((message: ExtensionMessage) => {
+chrome.runtime.onMessage.addListener((message                  ) => {
   if (message.type === "PROFILE_DETECTED") {
     renderDetected(message.payload.profile, message.payload.data);
   } else if (message.type === "PROFILE_DATA_UPDATED") {

@@ -63,6 +63,8 @@ export interface ProfileInvestigationResponse {
   unknowns: string[];
   unavailable: string[];
   limitations: string[];
+  reportPdfUrl?: string;
+  reportPdfPath?: string;
   completedAt: string;
 }
 

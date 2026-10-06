@@ -1,12 +1,12 @@
-import type {
-  ExtensionMessage,
-  ExtensionState,
-  DetectedInstagramProfile,
-} from "../shared/types.ts";
-import { detectInstagramProfileFromUrl } from "../shared/profileDetector.ts";
-import { requestProfileInvestigation } from "../shared/apiClient.ts";
+             
+                   
+                 
+                           
+                            
+import { detectInstagramProfileFromUrl } from "../shared/profileDetector.js";
+import { requestProfileInvestigation } from "../shared/apiClient.js";
 
-let currentState: ExtensionState = {
+let currentState                 = {
   status: "IDLE",
   profile: null,
   data: null,
@@ -38,7 +38,7 @@ chrome.runtime.onStartup.addListener(() => {
 /**
  * Update internal state and sync to local storage for side panel hydration.
  */
-async function updateState(newState: Partial<ExtensionState>) {
+async function updateState(newState                         ) {
   currentState = { ...currentState, ...newState };
   try {
     await chrome.storage.local.set({ veriqooState: currentState });
@@ -57,7 +57,7 @@ async function updateState(newState: Partial<ExtensionState>) {
 /**
  * Updates browser action badge reflecting Instagram detection status.
  */
-function updateTabBadge(tabId: number, isProfile: boolean, username?: string) {
+function updateTabBadge(tabId        , isProfile         , username         ) {
   if (!chrome.action) return;
 
   if (isProfile && username) {
@@ -75,15 +75,15 @@ function updateTabBadge(tabId: number, isProfile: boolean, username?: string) {
  */
 chrome.runtime.onMessage.addListener(
   (
-    message: ExtensionMessage,
-    sender: chrome.runtime.MessageSender,
-    sendResponse: (response?: any) => void,
+    message                  ,
+    sender                              ,
+    sendResponse                          ,
   ) => {
     if (!message || typeof message !== "object") return;
 
     switch (message.type) {
       case "PROFILE_DETECTED": {
-        const detectedProfile: DetectedInstagramProfile = message.payload.profile;
+        const detectedProfile                           = message.payload.profile;
         const profileData = message.payload.data || null;
         console.info(`[Veriqoo Service Worker] Profile detected: @${detectedProfile.username} (${detectedProfile.profileUrl})`);
         

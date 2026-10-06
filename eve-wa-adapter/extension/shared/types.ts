@@ -97,6 +97,7 @@ export interface ExtensionState {
   status: ExtensionStatus;
   profile: DetectedInstagramProfile | null;
   data: InstagramProfileData | null;
+  investigationResult?: any | null;
   error: string | null;
 }
 
@@ -115,6 +116,7 @@ export interface InvestigationResultPayload {
   username: string;
   status: "COMPLETE";
   summary?: string;
+  result?: any;
 }
 
 export interface InvestigationErrorPayload {
@@ -149,12 +151,22 @@ export type ExtensionMessage =
       payload: StartInvestigationPayload;
     }
   | {
+      type: "INVESTIGATION_COMPLETE";
+      payload: {
+        username: string;
+        result: any;
+      };
+    }
+  | {
       type: "INVESTIGATION_RESULT";
       payload: InvestigationResultPayload;
     }
   | {
       type: "INVESTIGATION_ERROR";
       payload: InvestigationErrorPayload;
+    }
+  | {
+      type: "OPEN_SIDE_PANEL";
     }
   | {
       type: "GET_CURRENT_STATE";

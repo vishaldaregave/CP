@@ -22,15 +22,15 @@
       <!-- State 1: IDLE / No Profile Detected -->
       <section id="state-idle" class="state-card visible">
         <div class="idle-icon-wrapper">
-          <span class="idle-icon">🔍</span>
+          <span id="idle-icon" class="idle-icon">🔍</span>
         </div>
-        <h2 class="idle-title">No Instagram profile detected</h2>
-        <p class="idle-desc">
+        <h2 id="idle-title" class="idle-title">No Instagram profile detected</h2>
+        <p id="idle-desc" class="idle-desc">
           Open a public Instagram profile (e.g. <code>instagram.com/username/</code>) to begin an investigation.
         </p>
       </section>
 
-      <!-- State 2: Profile Detected -->
+      <!-- State 2: Profile Detected (Pre-Verification) -->
       <section id="state-detected" class="state-card hidden">
         <div class="profile-card">
           <div class="avatar-wrapper">
@@ -102,22 +102,73 @@
 
         <div class="action-section">
           <button id="btn-verify" class="btn-primary">
-            VERIFY WITH VERIQOO
+            VERIFY PROFILE &amp; GENERATE PDF
           </button>
         </div>
 
-        <div id="phase-notice" class="phase-notice hidden">
-          <div class="notice-icon">ℹ️</div>
-          <div class="notice-text">
-            Profile investigation pipeline will be connected in Phase 3.5.
+        <!-- Loading spinner -->
+        <div id="investigating-loader" class="investigating-loader hidden">
+          <div class="spinner"></div>
+          <div class="loader-text">Analyzing 8 dimensions &amp; compiling publication PDF...</div>
+        </div>
+      </section>
+
+      <!-- State 3: Investigation Results & Publication-Grade PDF -->
+      <section id="state-results" class="state-card hidden">
+        <div class="results-header-card">
+          <div class="score-row">
+            <div class="score-circle">
+              <span id="res-trust-score" class="score-number">80</span>
+              <span class="score-denom">/100</span>
+            </div>
+            <div class="score-meta">
+              <div class="score-title">TRUST SCORE</div>
+              <span id="res-risk-badge" class="risk-badge low">LOW RISK</span>
+              <div class="score-submetrics">
+                <span>Confidence: <strong id="res-confidence">95%</strong></span>
+                <span>Coverage: <strong id="res-coverage">88%</strong></span>
+              </div>
+            </div>
           </div>
+        </div>
+
+        <!-- Primary Publication PDF Actions -->
+        <div class="pdf-action-card">
+          <div class="pdf-badge">PUBLICATION-GRADE DOSSIER</div>
+          <h3 class="pdf-title">8-Phase Intelligence Report Ready</h3>
+          <p class="pdf-desc">Full 21-page PDF matching Report_fromat.pdf with UI mockups, charts, and data citations.</p>
+          <button id="btn-open-pdf" class="btn-pdf-view">
+            📄 OPEN PDF INTELLIGENCE REPORT
+          </button>
+          <a id="btn-download-pdf" class="btn-pdf-download" href="#" target="_blank" download>
+            📥 Download PDF File
+          </a>
+          <div id="pdf-path-text" class="pdf-path-text"></div>
+        </div>
+
+        <!-- 8-Dimension Breakdown -->
+        <div class="dimensions-card">
+          <div class="dimensions-header">8-DIMENSION TRUST BREAKDOWN</div>
+          <div id="dimensions-list" class="dimensions-list"></div>
+        </div>
+
+        <!-- Evidence Ledger -->
+        <div class="evidence-card">
+          <div class="evidence-header">EVIDENCE LEDGER (TRACEABILITY)</div>
+          <div id="evidence-list" class="evidence-list"></div>
+        </div>
+
+        <div class="action-section" style="margin-top: 14px;">
+          <button id="btn-reinvestigate" class="btn-secondary">
+            ↻ RE-ANALYZE PROFILE
+          </button>
         </div>
       </section>
     </main>
 
     <!-- Footer -->
     <footer class="panel-footer">
-      <span>Veriqoo v0.1.0 • Foundation Preview</span>
+      <span>Veriqoo v0.1.0 • Trust Intelligence &amp; PDF Engine</span>
     </footer>
   </div>
 

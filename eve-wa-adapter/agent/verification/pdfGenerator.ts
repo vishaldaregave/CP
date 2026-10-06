@@ -1,7 +1,10 @@
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Discovers an available Chromium binary (Google Chrome or Microsoft Edge) on the system.
@@ -61,11 +64,16 @@ export async function convertHtmlToPdf(htmlContent: string, outputPdfPath: strin
     const resolvedPdf = path.resolve(outputPdfPath);
     const resolvedHtml = path.resolve(tempHtmlPath);
 
-    // Run Chromium with headless PDF flags
-    const cmd = `"${browserBinary}" --headless=new --disable-gpu --no-pdf-header-footer --print-to-pdf="${resolvedPdf}" "${resolvedHtml}"`;
+    // Run Chromium asynchronously with headless PDF flags
+    const args = [
+      "--headless=new",
+      "--disable-gpu",
+      "--no-pdf-header-footer",
+      `--print-to-pdf=${resolvedPdf}`,
+      resolvedHtml,
+    ];
 
-    execSync(cmd, {
-      stdio: "pipe",
+    await execFileAsync(browserBinary, args, {
       timeout: 30000,
     });
 

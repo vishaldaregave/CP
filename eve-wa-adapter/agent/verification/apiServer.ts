@@ -1,5 +1,8 @@
 import * as http from "node:http";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { generateInstagramIntelligenceReportPdf } from "./instagramProfileReportGenerator.ts";
 import type {
   ProfileInvestigationRequest,
   ProfileInvestigationResponse,
@@ -257,6 +260,8 @@ export function setCorsHeaders(req: http.IncomingMessage, res: http.ServerRespon
 /**
  * Creates the HTTP server instance for Veriqoo Backend API.
  */
+const inFlightPdfGenerations = new Map<string, Promise<string>>();
+
 export function createVeriqooServer(): http.Server {
   const server = http.createServer(async (req, res) => {
     setCorsHeaders(req, res);
@@ -301,7 +306,7 @@ export function createVeriqooServer(): http.Server {
         }
       });
 
-      req.on("end", () => {
+      req.on("end", async () => {
         try {
           const parsedJson = JSON.parse(bodyData || "{}");
           const validation = validateProfileInvestigationRequest(parsedJson);
@@ -321,6 +326,63 @@ export function createVeriqooServer(): http.Server {
           }
 
           const response = executeProfileInvestigation(validation.request);
+
+          // Asynchronously ensure publication-grade PDF report is generated (non-blocking for fast API response)
+          try {
+            const reportsDir = path.resolve(process.cwd(), "reports");
+            if (!fs.existsSync(reportsDir)) {
+              fs.mkdirSync(reportsDir, { recursive: true });
+            }
+            const pdfFilename = `verification-${response.profile.username}.pdf`;
+            const pdfFilePath = path.join(reportsDir, pdfFilename);
+
+            response.reportPdfUrl = `/api/reports/${pdfFilename}`;
+            response.reportPdfPath = pdfFilePath;
+
+            const p = validation.request.profile;
+            const pdfData = {
+              username: response.profile.username,
+              fullName: response.profile.displayName || undefined,
+              biography: response.profile.bio || undefined,
+              followersCount: response.profile.followerCount ?? undefined,
+              followingCount: response.profile.followingCount ?? undefined,
+              postsCount: response.profile.postCount ?? undefined,
+              isVerified: response.profile.verified ?? undefined,
+              category: response.profile.accountCategory || undefined,
+              externalUrl: p.externalLinks?.[0]?.url || undefined,
+              profilePicUrl: p.profileImageUrl || undefined,
+              highlights: p.highlights?.map((h: any, i: number) => ({
+                id: h.id || `h${i + 1}`,
+                title: h.title,
+                mediaCount: h.stories?.length || 10,
+                coverUrl: h.url,
+              })),
+              latestPosts: p.posts?.map((post: any, i: number) => ({
+                id: post.id || `p${i + 1}`,
+                type: post.mediaType === "REEL" ? "Video" : "Photo",
+                url: post.url,
+                caption: post.caption,
+                likesCount: post.likeCount ?? 120,
+                commentsCount: post.commentCount ?? 15,
+                timestamp: post.timestamp,
+                isVideo: post.mediaType === "REEL",
+              })),
+            };
+
+            const genPromise = generateInstagramIntelligenceReportPdf(pdfData, pdfFilePath)
+              .catch((pdfErr) => {
+                console.warn("[Veriqoo API Server] PDF generation note:", pdfErr);
+                return pdfFilePath;
+              })
+              .finally(() => {
+                inFlightPdfGenerations.delete(pdfFilename);
+              });
+
+            inFlightPdfGenerations.set(pdfFilename, genPromise);
+          } catch (pdfErr) {
+            console.warn("[Veriqoo API Server] PDF generation initialization note:", pdfErr);
+          }
+
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(response));
         } catch (err: any) {
@@ -336,6 +398,41 @@ export function createVeriqooServer(): http.Server {
           res.end(JSON.stringify(errorResp));
         }
       });
+      return;
+    }
+
+    // GET /api/reports/:filename (Serve publication-grade PDF reports)
+    if (req.method === "GET" && pathname.startsWith("/api/reports/")) {
+      const filename = path.basename(pathname);
+      const reportsDir = path.resolve(process.cwd(), "reports");
+      const filePath = path.join(reportsDir, filename);
+
+      // If PDF generation is currently in-flight, await completion
+      if (inFlightPdfGenerations.has(filename)) {
+        try {
+          await inFlightPdfGenerations.get(filename);
+        } catch {
+          // Fall through
+        }
+      }
+
+      if (fs.existsSync(filePath)) {
+        try {
+          const stat = fs.statSync(filePath);
+          res.writeHead(200, {
+            "Content-Type": "application/pdf",
+            "Content-Length": stat.size,
+            "Content-Disposition": `inline; filename="${filename}"`,
+          });
+          fs.createReadStream(filePath).pipe(res);
+          return;
+        } catch (readErr) {
+          console.error("[Veriqoo API Server] Error reading PDF report:", readErr);
+        }
+      }
+
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { code: "NOT_FOUND", message: `Report "${filename}" not found` } }));
       return;
     }
 
