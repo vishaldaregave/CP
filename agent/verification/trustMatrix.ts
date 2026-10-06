@@ -329,9 +329,9 @@ export function buildTrustMatrix(
     missing_information.push("Independent business registration not checked");
   }
   if (metaAd?.status === "not_found") {
-    missing_information.push("No active Meta Ad Library campaigns found for advertiser/product");
-  } else if (metaAd?.status === "unavailable") {
-    missing_information.push("Meta Ad Library data was unavailable during verification");
+    missing_information.push("No matching ads were returned by the Meta Ad Library API for the current query");
+  } else if (metaAd?.status === "unavailable" || metaAd?.status === "error") {
+    missing_information.push(metaAd.limitation || "Meta Ad Library data was unavailable during verification");
   }
 
   // 4. Traceable Conclusions

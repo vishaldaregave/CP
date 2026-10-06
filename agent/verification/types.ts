@@ -150,8 +150,33 @@ export interface MediaEvidence {
   errors: string[];
 }
 
+export interface MetaAdRecord {
+  libraryId: string;
+  advertiserName: string | null;
+  advertiserPageId: string | null;
+  publisherPlatforms: string[];
+  deliveryStart: string | null;
+  deliveryEnd: string | null;
+  adText: string | null;
+  linkTitle: string | null;
+  linkDescription: string | null;
+  adSnapshotUrl: string | null;
+  destinationUrl: string | null;
+  evidenceSource: "meta_ad_library";
+}
+
 export interface MetaAdEvidence {
-  status: "found" | "not_found" | "unavailable";
+  status: "found" | "not_found" | "unavailable" | "error";
+  queryTerms: string[];
+  country: string;
+  ads: MetaAdRecord[];
+  totalFound: number;
+  source: "meta_ad_library";
+  collectedAt: string;
+  error?: string;
+  limitation?: string;
+
+  // Convenience / backwards compatibility fields
   libraryId?: string;
   advertiserName?: string;
   advertiserPageId?: string;
@@ -164,7 +189,23 @@ export interface MetaAdEvidence {
   adSnapshotUrl?: string;
   destinationUrl?: string;
   evidenceSource?: string;
-  error?: string;
+}
+
+export interface MetaAdCollectionInput {
+  instagramUrl: string;
+  instagramHandle?: string | null;
+  sellerName?: string | null;
+  brand?: string | null;
+  product?: string | null;
+  pageId?: string | null;
+}
+
+export interface AdvertiserIdentityCheck {
+  instagramSeller: string | null;
+  metaAdvertiser: string | null;
+  websiteSeller: string | null;
+  result: ConsistencyRating;
+  details: string;
 }
 
 export type AdPressureType =
@@ -198,7 +239,7 @@ export interface AdClaimAnalysis {
   pressure_signals: AdPressureSignal[];
 }
 
-export type SourceType = "instagram" | "website" | "product_image" | "seller" | "meta_ad";
+export type SourceType = "instagram" | "website" | "product_image" | "seller" | "meta_ad" | "received_product";
 
 export interface SourceValue {
   source: SourceType;
@@ -244,6 +285,7 @@ export interface EvidenceCheckStatus {
   website: boolean;
   product_image: boolean;
   ocr: boolean;
+  received_product?: boolean;
 }
 
 export interface TrustMatrix {
@@ -279,16 +321,164 @@ export interface ConsistencyResult {
   product_consistency: ConsistencyRating;
   brand_consistency: ConsistencyRating;
   price_consistency: PriceConsistencyRating;
+  advertiser_identity?: AdvertiserIdentityCheck;
   details: string[];
 }
 
-export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN";
+// ---------------------------------------------------------------------------
+// FEATURE 1: Seller Identity Graph
+// ---------------------------------------------------------------------------
+
+export interface IdentityRelationship {
+  source: SourceType;
+  targetSource: SourceType;
+  type: string;
+  sourceValue: string;
+  targetValue: string;
+  rating: ConsistencyRating;
+  confidence: number;
+  explanation: string;
+}
+
+export interface SellerIdentityNode {
+  type: SourceType;
+  label: string;
+  value: string;
+  verified: boolean;
+}
+
+export interface SellerIdentityGraph {
+  overallRating: ConsistencyRating;
+  confidence: number;
+  nodes: SellerIdentityNode[];
+  relationships: IdentityRelationship[];
+  summary: string;
+  trust_signals: TrustSignal[];
+  risk_signals: TrustSignal[];
+}
+
+// ---------------------------------------------------------------------------
+// FEATURE 2: Cross-Source Product Consistency
+// ---------------------------------------------------------------------------
+
+export interface ProductConsistencyField {
+  field: string;
+  rating: ConsistencyRating;
+  valuesBySource: Record<string, string | null>;
+  explanation: string;
+  discrepancyNote?: string;
+}
+
+export interface ProductConsistencyReport {
+  overallRating: ConsistencyRating;
+  fields: Record<string, ProductConsistencyField>;
+  trust_signals: TrustSignal[];
+  risk_signals: TrustSignal[];
+  summary: string;
+}
+
+// ---------------------------------------------------------------------------
+// FEATURE 3: Post-Purchase Received Product Verification
+// ---------------------------------------------------------------------------
+
+export interface ReceivedProductEvidence {
+  brand: string | null;
+  product: string | null;
+  category: string | null;
+  price: string | null;
+  mrp: string | null;
+  net_quantity: string | null;
+  pack_size: string | null;
+  manufacturer: string | null;
+  country_of_origin: string | null;
+  claims: string[];
+  ocr_text: string;
+  confidence: number;
+  extractedFacts: ExtractedFact[];
+}
+
+export interface PostPurchaseFieldComparison {
+  field: string;
+  advertised: string | null;
+  received: string | null;
+  rating: ConsistencyRating;
+  explanation: string;
+}
+
+export interface PostPurchaseComparisonResult {
+  status: "MATCH" | "PARTIAL" | "MISMATCH" | "UNKNOWN";
+  overallRating: ConsistencyRating;
+  investigationId: string;
+  comparisonTimestamp: string;
+  fields: Record<string, PostPurchaseFieldComparison>;
+  mismatchesDetected: string[];
+  receivedProduct: ReceivedProductEvidence;
+  summary: string;
+  updatedRiskLevel: RiskLevel;
+  updatedConfidence: number;
+  updatedRiskExplanation: string;
+}
+
+export interface PostPurchaseSession {
+  investigationId: string;
+  originalResult: VerificationResult;
+  timestamp: string;
+  expiresAt: number;
+  jid: string;
+}
+
+// ---------------------------------------------------------------------------
+// FEATURE 4: Evidence Timeline
+// ---------------------------------------------------------------------------
+
+export interface TimelineEvent {
+  timestamp: string;
+  source: SourceType | "ocr" | "packaging" | "received_product" | "risk_engine" | "user_submission";
+  event: string;
+  description: string;
+  confidence: number;
+}
+
+export interface EvidenceTimeline {
+  events: TimelineEvent[];
+  startedAt: string;
+  lastUpdatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// FEATURE 5 & 6: Explainable Risk Factors & Evidence Score
+// ---------------------------------------------------------------------------
+
+export type RiskFactorCategory =
+  | "SELLER_IDENTITY"
+  | "ADVERTISING"
+  | "PRODUCT"
+  | "PRICE"
+  | "WEBSITE"
+  | "PACKAGING"
+  | "AUTHENTICITY"
+  | "CROSS_SOURCE"
+  | "POST_PURCHASE";
+
+export interface RiskFactor {
+  severity: "low" | "medium" | "high" | "positive";
+  category: RiskFactorCategory;
+  title: string;
+  explanation: string;
+  evidence: string;
+  sources: SourceType[];
+}
+
+export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN" | "INSUFFICIENT_EVIDENCE";
 
 export interface RiskAnalysisResult {
   risk_level: RiskLevel;
   confidence: number; // 0 to 100
+  score?: number; // 0 to 100
+  evidence_coverage?: number; // 0 to 100
   positive_signals: string[];
   risk_signals: string[];
+  risk_factors?: RiskFactor[];
   missing_information: string[];
   consistency_checks: string[];
   recommendation: string;
@@ -305,6 +495,10 @@ export interface VerificationResult {
   media_evidence?: MediaEvidence | null;
   image_cross_check?: ImageCrossCheckResult | null;
   consistency?: ConsistencyResult | null;
+  seller_identity_graph?: SellerIdentityGraph | null;
+  product_consistency?: ProductConsistencyReport | null;
+  evidence_timeline?: EvidenceTimeline | null;
+  post_purchase_comparison?: PostPurchaseComparisonResult | null;
   trust_matrix?: TrustMatrix | null;
   product: ProductInfo;
   seller: SellerInfo;

@@ -1,6 +1,6 @@
 import type { VerificationResult, RiskLevel } from "./types.ts";
 
-function getRiskHeader(level: RiskLevel): string {
+function getRiskBadge(level: RiskLevel): string {
   switch (level) {
     case "LOW":
       return "🟢 RISK: LOW";
@@ -8,6 +8,7 @@ function getRiskHeader(level: RiskLevel): string {
       return "🟠 RISK: MEDIUM";
     case "HIGH":
       return "🔴 RISK: HIGH";
+    case "INSUFFICIENT_EVIDENCE":
     case "UNKNOWN":
     default:
       return "⚪ RISK: UNKNOWN";
@@ -15,9 +16,9 @@ function getRiskHeader(level: RiskLevel): string {
 }
 
 /**
- * Formats the VerificationResult into the complete Feature 4 Multi-Source Trust Verification layout.
+ * Formats the VerificationResult into the complete Veriqoo multi-source trust check layout.
  */
-export function formatVerificationResult(result: VerificationResult): string {
+export function formatVerificationResult(result: VerificationResult, reportId?: string): string {
   if (result.status === "INSUFFICIENT_EVIDENCE") {
     const reason =
       result.failure_reason ||
@@ -35,28 +36,43 @@ export function formatVerificationResult(result: VerificationResult): string {
       "Reason:",
       reason,
       "",
+      "━━━━━━━━━━━━━━━━━━",
+      "",
       "Recommendation:",
       "Do not treat this result as proof that the product is fake. Verify the seller independently before purchasing.",
     ].join("\n");
   }
 
-  const { product, risk, evidence, media_evidence, trust_matrix } = result;
+  const {
+    product,
+    seller,
+    risk,
+    evidence,
+    meta_ad_evidence,
+    website_evidence,
+    media_evidence,
+    seller_identity_graph,
+    product_consistency,
+    ad_claim_analysis,
+  } = result;
+
   const productName = product.name || media_evidence?.packaging?.product.name || "Instagram Product / Item";
   const brandName =
     product.brand ||
     media_evidence?.packaging?.product.brand ||
-    (evidence.account.username ? `@${evidence.account.username}` : "Unspecified");
+    (evidence.account?.username ? `@${evidence.account.username}` : "Unspecified");
 
   const evidenceCheck = risk.evidence_check || {
     instagram: true,
-    meta_ad: Boolean(result.meta_ad_evidence?.status === "found"),
-    website: Boolean(result.website_evidence?.status === "accessible"),
+    meta_ad: Boolean(meta_ad_evidence?.status === "found"),
+    website: Boolean(website_evidence?.status === "accessible"),
     product_image: evidence.media.length > 0,
     ocr: Boolean(media_evidence?.ocr?.status === "success" || media_evidence?.ocr?.status === "partial"),
   };
 
   const lines: string[] = [
     "🔍 PRODUCT VERIFICATION",
+    "🔍 VERIQOO TRUST CHECK",
     "",
     "Product:",
     productName,
@@ -64,14 +80,19 @@ export function formatVerificationResult(result: VerificationResult): string {
     "Brand:",
     brandName,
     "",
-    "━━━━━━━━━━━━━━",
+    "Seller:",
+    seller.username ? `@${seller.username}` : seller.name || "Unspecified",
     "",
-    getRiskHeader(risk.risk_level),
+    "━━━━━━━━━━━━━━━━━━",
+    "",
+    getRiskBadge(risk.risk_level),
     "",
     "Confidence:",
     `${risk.confidence}%`,
     "",
-    "━━━━━━━━━━━━━━",
+    `Evidence Coverage: ${risk.evidence_coverage ?? 75}%`,
+    "",
+    "━━━━━━━━━━━━━━━━━━",
     "",
     "🔎 EVIDENCE CHECK",
     "",
@@ -82,73 +103,99 @@ export function formatVerificationResult(result: VerificationResult): string {
     `OCR            ${evidenceCheck.ocr ? "✅" : "⚪"}`,
   ];
 
-  // Optional: Meta Ad Intelligence Section
-  if (result.meta_ad_evidence && result.meta_ad_evidence.status === "found") {
+  // 1. SELLER IDENTITY
+  if (seller_identity_graph) {
     lines.push("");
-    lines.push("━━━━━━━━━━━━━━");
+    lines.push("━━━━━━━━━━━━━━━━━━");
     lines.push("");
-    lines.push("📣 META AD INTELLIGENCE");
-    lines.push("");
-    lines.push(`Status: FOUND`);
-    if (result.meta_ad_evidence.advertiserName) {
-      lines.push(`Advertiser: ${result.meta_ad_evidence.advertiserName}`);
-    }
-    if (result.meta_ad_evidence.libraryId) {
-      lines.push(`Library ID: ${result.meta_ad_evidence.libraryId}`);
-    }
-    if (result.meta_ad_evidence.publisherPlatforms && result.meta_ad_evidence.publisherPlatforms.length > 0) {
-      lines.push(`Platforms: ${result.meta_ad_evidence.publisherPlatforms.join(", ")}`);
-    }
-    if (result.meta_ad_evidence.deliveryStart) {
-      lines.push(`Delivery: ${result.meta_ad_evidence.deliveryStart} → ${result.meta_ad_evidence.deliveryEnd || "Active"}`);
+    lines.push("👤 SELLER IDENTITY");
+    if (seller_identity_graph.overallRating === "MATCH") {
+      lines.push("✓ MATCH");
+    } else if (seller_identity_graph.overallRating === "PARTIAL") {
+      lines.push("⚠️ PARTIAL MATCH");
+    } else if (seller_identity_graph.overallRating === "MISMATCH") {
+      lines.push("🔴 MISMATCH");
+    } else {
+      lines.push("⚪ UNVERIFIED");
     }
   }
 
-  // Optional: Ad Claim Analysis Section
-  const allClaims: string[] = [
-    ...(result.ad_claim_analysis?.claims_detected || []),
-    ...(result.ad_claim_analysis?.price_claims || []),
-    ...(result.ad_claim_analysis?.authenticity_claims || []),
-    ...(result.ad_claim_analysis?.urgency_claims || []),
-    ...(result.ad_claim_analysis?.scarcity_claims || []),
-    ...(result.ad_claim_analysis?.authority_claims || []),
-  ];
-  const uniqueClaims = Array.from(new Set(allClaims));
-  const pressureSignals =
-    result.ad_claim_analysis?.ad_pressure_signals ||
-    result.ad_claim_analysis?.pressure_signals ||
-    [];
+  // 2. META AD LIBRARY & CLAIMS
+  if (meta_ad_evidence) {
+    lines.push("");
+    lines.push("━━━━━━━━━━━━━━━━━━");
+    lines.push("");
+    lines.push("📢 META ADVERTISING");
+    lines.push("📢 META AD LIBRARY");
 
-  if (uniqueClaims.length > 0 || pressureSignals.length > 0) {
-    lines.push("");
-    lines.push("━━━━━━━━━━━━━━");
-    lines.push("");
-    lines.push("📢 AD CLAIM ANALYSIS");
-    lines.push("");
-    if (uniqueClaims.length > 0) {
-      lines.push("Claims detected:");
-      for (const c of uniqueClaims.slice(0, 4)) {
-        lines.push(`• "${c}"`);
+    if (meta_ad_evidence.status === "found") {
+      lines.push("Status: FOUND");
+      lines.push("✓ Ad evidence found");
+      if (meta_ad_evidence.advertiserName) {
+        lines.push(`Advertiser: ${meta_ad_evidence.advertiserName}`);
       }
-    }
-    if (pressureSignals.length > 0) {
-      lines.push("");
-      lines.push("Advertising patterns:");
-      for (const p of pressureSignals.slice(0, 3)) {
-        lines.push(`⚠️ ${p.type.replace(/_/g, " ")}: "${p.text}"`);
+      lines.push(`Ads found: ${meta_ad_evidence.totalFound || meta_ad_evidence.ads?.length || 1}`);
+
+      if (ad_claim_analysis?.price_anchoring_claims?.length) {
+        for (const claim of ad_claim_analysis.price_anchoring_claims.slice(0, 2)) {
+          lines.push(`⚠️ ${claim}`);
+        }
       }
+      if (ad_claim_analysis?.authenticity_claims?.length) {
+        for (const claim of ad_claim_analysis.authenticity_claims.slice(0, 2)) {
+          lines.push(`⚠️ "${claim}"`);
+        }
+      }
+      if (ad_claim_analysis?.urgency_claims?.length) {
+        lines.push("⚠️ Urgency language detected");
+      }
+    } else if (meta_ad_evidence.status === "unavailable" || meta_ad_evidence.status === "error") {
+      lines.push("Status: UNAVAILABLE");
+      lines.push("⚪ Library search unavailable (no risk penalty)");
+    } else {
+      lines.push("Status: NOT FOUND");
+      lines.push("⚪ No active public ads found (no risk penalty)");
     }
-    lines.push("");
-    lines.push("_These are promotional patterns requiring verification, not proof of fraud._");
   }
 
+  // 3. WEBSITE
   lines.push("");
-  lines.push("━━━━━━━━━━━━━━");
+  lines.push("━━━━━━━━━━━━━━━━━━");
+  lines.push("");
+  lines.push("🌐 WEBSITE");
+  if (website_evidence?.status === "accessible") {
+    lines.push(`✓ Found (${website_evidence.domain || "Storefront"})`);
+    if (website_evidence.company?.phone || website_evidence.company?.email) {
+      lines.push("✓ Contact details present");
+    }
+  } else {
+    lines.push("⚪ No independent storefront found");
+  }
+
+  // 4. PRODUCT CONSISTENCY
+  if (product_consistency) {
+    lines.push("");
+    lines.push("━━━━━━━━━━━━━━━━━━");
+    lines.push("");
+    lines.push("📦 PRODUCT");
+    if (product_consistency.overallRating === "MATCH") {
+      lines.push("✓ Product information consistent across sources");
+    } else if (product_consistency.overallRating === "PARTIAL") {
+      lines.push("⚠️ Partial consistency across sources");
+    } else if (product_consistency.overallRating === "MISMATCH") {
+      lines.push("⚠️ Product information inconsistent");
+    } else {
+      lines.push("⚪ Single-source product details");
+    }
+  }
+
+  // 5. TRUST SIGNALS
+  lines.push("");
+  lines.push("━━━━━━━━━━━━━━━━━━");
   lines.push("");
   lines.push("✅ TRUST SIGNALS");
   lines.push("");
-
-  if (risk.positive_signals.length > 0) {
+  if (risk.positive_signals && risk.positive_signals.length > 0) {
     for (const sig of risk.positive_signals.slice(0, 5)) {
       lines.push(`• ${sig}`);
     }
@@ -156,13 +203,13 @@ export function formatVerificationResult(result: VerificationResult): string {
     lines.push("• Single-source listing (no multi-platform corroboration)");
   }
 
+  // 6. RISK SIGNALS
   lines.push("");
-  lines.push("━━━━━━━━━━━━━━");
+  lines.push("━━━━━━━━━━━━━━━━━━");
   lines.push("");
   lines.push("⚠️ RISK SIGNALS");
   lines.push("");
-
-  if (risk.risk_signals.length > 0) {
+  if (risk.risk_signals && risk.risk_signals.length > 0) {
     for (const rs of risk.risk_signals) {
       lines.push(`• ${rs}`);
     }
@@ -170,9 +217,10 @@ export function formatVerificationResult(result: VerificationResult): string {
     lines.push("• None detected");
   }
 
-  if (risk.missing_information.length > 0) {
+  // 7. MISSING INFORMATION
+  if (risk.missing_information && risk.missing_information.length > 0) {
     lines.push("");
-    lines.push("━━━━━━━━━━━━━━");
+    lines.push("━━━━━━━━━━━━━━━━━━");
     lines.push("");
     lines.push("❓ MISSING INFORMATION");
     lines.push("");
@@ -181,19 +229,39 @@ export function formatVerificationResult(result: VerificationResult): string {
     }
   }
 
+  // 8. WHY? / EXPLANATION
   lines.push("");
-  lines.push("━━━━━━━━━━━━━━");
+  lines.push("━━━━━━━━━━━━━━━━━━");
   lines.push("");
   lines.push("💡 WHY?");
   lines.push("");
-  lines.push(risk.explanation || trust_matrix?.summary_explanation || "Evidence-based multi-source verification completed.");
+  lines.push(risk.explanation || "Evidence-based multi-source verification completed.");
 
+  // 9. RECOMMENDATION
   lines.push("");
-  lines.push("━━━━━━━━━━━━━━");
+  lines.push("━━━━━━━━━━━━━━━━━━");
   lines.push("");
   lines.push("RECOMMENDATION");
   lines.push("");
   lines.push(risk.recommendation);
+
+  // 10. POST-PURCHASE HOOK
+  lines.push("");
+  lines.push("━━━━━━━━━━━━━━━━━━");
+  lines.push("");
+  lines.push("📦 DID YOU RECEIVE THE PRODUCT?");
+  lines.push("");
+  lines.push("Send a clear photo if you want a post-purchase comparison.");
+
+  // 11. DETAILED EVIDENCE REPORT
+  lines.push("");
+  lines.push("━━━━━━━━━━━━━━━━━━");
+  lines.push("");
+  lines.push("📄 Detailed Evidence Report");
+  if (reportId) {
+    lines.push(`• Report ID: ${reportId}`);
+    lines.push("• Document attached below");
+  }
 
   return lines.join("\n");
 }

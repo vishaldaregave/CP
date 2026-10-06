@@ -43,7 +43,13 @@ export function normalizeEvidence(
   if (media?.packaging?.product.name) {
     normalized.product_name.push({ source: "product_image", value: media.packaging.product.name, method: "OCR" });
   }
-  if (metaAd?.linkTitle) {
+  if (metaAd?.ads && metaAd.ads.length > 0) {
+    for (const ad of metaAd.ads) {
+      if (ad.linkTitle) {
+        normalized.product_name.push({ source: "meta_ad", value: ad.linkTitle, method: "ad_creative_title" });
+      }
+    }
+  } else if (metaAd?.linkTitle) {
     normalized.product_name.push({ source: "meta_ad", value: metaAd.linkTitle, method: "ad_creative_title" });
   }
 
@@ -64,7 +70,13 @@ export function normalizeEvidence(
   if (seller.name && seller.name !== product.brand) {
     normalized.brand.push({ source: "seller", value: seller.name, method: "profile_metadata" });
   }
-  if (metaAd?.advertiserName) {
+  if (metaAd?.ads && metaAd.ads.length > 0) {
+    for (const ad of metaAd.ads) {
+      if (ad.advertiserName && !normalized.brand.some((b) => b.value === ad.advertiserName && b.source === "meta_ad")) {
+        normalized.brand.push({ source: "meta_ad", value: ad.advertiserName, method: "meta_page_name" });
+      }
+    }
+  } else if (metaAd?.advertiserName) {
     normalized.brand.push({ source: "meta_ad", value: metaAd.advertiserName, method: "meta_page_name" });
   }
 
@@ -81,7 +93,13 @@ export function normalizeEvidence(
   if (media?.packaging?.manufacturer.name) {
     normalized.seller.push({ source: "product_image", value: media.packaging.manufacturer.name, method: "OCR" });
   }
-  if (metaAd?.advertiserName) {
+  if (metaAd?.ads && metaAd.ads.length > 0) {
+    for (const ad of metaAd.ads) {
+      if (ad.advertiserName && !normalized.seller.some((s) => s.value === ad.advertiserName && s.source === "meta_ad")) {
+        normalized.seller.push({ source: "meta_ad", value: ad.advertiserName, method: "meta_ad_advertiser" });
+      }
+    }
+  } else if (metaAd?.advertiserName) {
     normalized.seller.push({ source: "meta_ad", value: metaAd.advertiserName, method: "meta_ad_advertiser" });
   }
 
@@ -128,7 +146,13 @@ export function normalizeEvidence(
       normalized.website.push({ source: "product_image", value: web, method: "OCR" });
     }
   }
-  if (metaAd?.destinationUrl) {
+  if (metaAd?.ads && metaAd.ads.length > 0) {
+    for (const ad of metaAd.ads) {
+      if (ad.destinationUrl && !normalized.website.some((w) => w.value === ad.destinationUrl && w.source === "meta_ad")) {
+        normalized.website.push({ source: "meta_ad", value: ad.destinationUrl, method: "ad_destination_url" });
+      }
+    }
+  } else if (metaAd?.destinationUrl) {
     normalized.website.push({ source: "meta_ad", value: metaAd.destinationUrl, method: "ad_destination_url" });
   }
 
@@ -160,7 +184,13 @@ export function normalizeEvidence(
       normalized.claims.push({ source: "product_image", value: c, method: "OCR" });
     }
   }
-  if (metaAd?.adText) {
+  if (metaAd?.ads && metaAd.ads.length > 0) {
+    for (const ad of metaAd.ads) {
+      if (ad.adText && !normalized.claims.some((c) => c.value === ad.adText && c.source === "meta_ad")) {
+        normalized.claims.push({ source: "meta_ad", value: ad.adText, method: "ad_creative_body" });
+      }
+    }
+  } else if (metaAd?.adText) {
     normalized.claims.push({ source: "meta_ad", value: metaAd.adText, method: "ad_creative_body" });
   }
 

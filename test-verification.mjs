@@ -20,6 +20,17 @@ import {
   escapeHtml,
   collectMetaAdEvidence,
   analyzeAdClaims,
+  compareAdvertiserIdentity,
+  buildSellerIdentityGraph,
+  evaluateProductConsistency,
+  buildEvidenceTimeline,
+  analyzeReceivedProductImage,
+  analyzeReceivedProductText,
+  compareAdvertisedVsReceived,
+  storePostPurchaseSession,
+  getPostPurchaseSession,
+  removePostPurchaseSession,
+  calculateEvidenceCoverage,
 } from "./agent/verification/index.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -895,439 +906,851 @@ test("FEATURE 5 - TEST 12: Empty VerificationResult is handled safely", () => {
 });
 
 // ==========================================
-// META AD INTELLIGENCE & AD CLAIM TESTS
+// META AD INTELLIGENCE & AD CLAIM TESTS (20 SCENARIOS)
 // ==========================================
 
-test("META TEST 1: Missing Meta token returns status 'unavailable'", async () => {
-  const originalToken = process.env.META_AD_LIBRARY_ACCESS_TOKEN;
-  delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+test("META TEST 1: Meta API returns an ad", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_VALID_MOCK_TOKEN";
   try {
-    const evidence = {
-      source: { platform: "instagram", url: "https://instagram.com/p/test" },
-      account: { username: "xyzstore" },
-      post: { caption: "Shoes for sale" },
-      media: [],
-      external_links: [],
-      evidence: [],
-      missing_information: [],
-      errors: [],
+    globalThis.fetch = async (url) => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [
+            {
+              id: "AD_1001",
+              page_id: "PAGE_999",
+              page_name: "Joota Vyapari Official",
+              publisher_platforms: ["INSTAGRAM"],
+              ad_delivery_start_time: "2026-08-01T00:00:00+0000",
+              ad_delivery_stop_time: null,
+              ad_creative_bodies: ["Premium leather shoes 90% OFF today only"],
+              ad_creative_link_titles: ["Handcrafted Oxford Shoes"],
+              ad_creative_link_descriptions: ["Genuine leather with rubber sole"],
+              ad_creative_link_captions: ["https://jootavyapari.com/oxford"],
+              ad_snapshot_url: "https://www.facebook.com/ads/archive/render_ad/?id=AD_1001",
+            },
+          ],
+        }),
+      };
     };
-    const product = { name: "Shoes", brand: "Nike" };
-    const seller = { username: "xyzstore" };
 
-    const result = await collectMetaAdEvidence(evidence, product, seller);
-    assert.equal(result.status, "unavailable");
-    assert.ok(result.error?.includes("No Meta Ad Library access token configured"));
-    assert.equal(result.evidenceSource, "Meta Ad Library");
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/test1/",
+      instagramHandle: "joota_vyapari",
+      sellerName: "Joota Vyapari",
+      brand: "Joota Vyapari",
+      product: "Handcrafted Oxford Shoes",
+    });
+
+    assert.equal(result.status, "found");
+    assert.equal(result.totalFound, 1);
+    assert.equal(result.ads.length, 1);
+    assert.equal(result.ads[0].libraryId, "AD_1001");
+    assert.equal(result.ads[0].advertiserName, "Joota Vyapari Official");
+    assert.equal(result.ads[0].advertiserPageId, "PAGE_999");
+    assert.equal(result.ads[0].adText, "Premium leather shoes 90% OFF today only");
+    assert.equal(result.ads[0].linkTitle, "Handcrafted Oxford Shoes");
+    assert.equal(result.ads[0].destinationUrl, "https://jootavyapari.com/oxford");
+    assert.equal(result.ads[0].adSnapshotUrl, "https://www.facebook.com/ads/archive/render_ad/?id=AD_1001");
   } finally {
-    if (originalToken) {
-      process.env.META_AD_LIBRARY_ACCESS_TOKEN = originalToken;
-    }
-  }
-});
-
-test("META TEST 2: Meta API unavailable or invalid token handled gracefully", async () => {
-  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_TEST_INVALID_TOKEN";
-  try {
-    const evidence = {
-      source: { platform: "instagram", url: "https://instagram.com/p/test" },
-      account: { username: "xyzstore" },
-      post: { caption: "Shoes for sale" },
-      media: [],
-      external_links: [],
-      evidence: [],
-      missing_information: [],
-      errors: [],
-    };
-    const product = { name: "Shoes", brand: "Nike" };
-    const seller = { username: "xyzstore" };
-
-    const result = await collectMetaAdEvidence(evidence, product, seller);
-    // Invalid token against real Graph API returns unavailable with error
-    assert.ok(["unavailable", "not_found"].includes(result.status));
-    assert.equal(result.evidenceSource, "Meta Ad Library");
-  } finally {
+    globalThis.fetch = originalFetch;
     delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
   }
 });
 
-test("META TEST 3: Ad Claim Analyzer extracts extreme discounts (e.g. 90% OFF)", () => {
-  const text = "Get flat 90% OFF on all Nike items today!";
-  const analysis = analyzeAdClaims(text, "meta_ad");
+test("META TEST 2: Meta API returns multiple ads", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_VALID_MOCK_TOKEN";
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [
+          { id: "AD_1", page_name: "BrandStore", ad_creative_bodies: ["Ad 1 Body"] },
+          { id: "AD_2", page_name: "BrandStore", ad_creative_bodies: ["Ad 2 Body"] },
+          { id: "AD_3", page_name: "BrandStore", ad_creative_bodies: ["Ad 3 Body"] },
+        ],
+      }),
+    });
 
-  assert.ok(analysis.claims_detected.some((c) => c.includes("90% OFF")));
-  assert.ok(analysis.ad_pressure_signals.some((s) => s.type === "extreme_discount"));
-  assert.equal(analysis.ad_pressure_signals[0].source, "meta_ad");
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/multitest/",
+      instagramHandle: "brandstore",
+    });
+
+    assert.equal(result.status, "found");
+    assert.equal(result.totalFound, 3);
+    assert.equal(result.ads.length, 3);
+    assert.equal(result.ads[0].libraryId, "AD_1");
+    assert.equal(result.ads[1].libraryId, "AD_2");
+    assert.equal(result.ads[2].libraryId, "AD_3");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
 });
 
-test("META TEST 4: Ad Claim Analyzer extracts urgency claims", () => {
-  const text = "Special sale ending tonight! Last chance to buy.";
-  const analysis = analyzeAdClaims(text, "instagram");
+test("META TEST 3: Instagram publisher platform filtering", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_VALID_MOCK_TOKEN";
+  let capturedUrl = "";
+  try {
+    globalThis.fetch = async (url) => {
+      capturedUrl = String(url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [{ id: "AD_INSTA", page_name: "Shop", publisher_platforms: ["INSTAGRAM"] }],
+        }),
+      };
+    };
 
-  assert.ok(analysis.claims_detected.some((c) => /ending tonight|last chance/i.test(c)));
-  assert.ok(analysis.ad_pressure_signals.some((s) => s.type === "urgency"));
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/plat1/",
+      instagramHandle: "shop_ig",
+    });
+
+    assert.ok(capturedUrl.includes("publisher_platforms="));
+    assert.equal(result.ads[0].publisherPlatforms[0], "INSTAGRAM");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
 });
 
-test("META TEST 5: Ad Claim Analyzer extracts scarcity claims", () => {
-  const text = "Hurry! Only 3 left in stock! Limited quantity available.";
-  const analysis = analyzeAdClaims(text, "meta_ad");
+test("META TEST 4: Advertiser extraction", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_VALID_MOCK_TOKEN";
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [{ id: "AD_ADV", page_id: "PAGE_12345", page_name: "Apex Electronics India" }],
+      }),
+    });
 
-  assert.ok(analysis.claims_detected.some((c) => /only 3 left|limited/i.test(c)));
-  assert.ok(analysis.ad_pressure_signals.some((s) => s.type === "scarcity"));
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/adv1/",
+      sellerName: "Apex Electronics",
+    });
+
+    assert.equal(result.advertiserName, "Apex Electronics India");
+    assert.equal(result.advertiserPageId, "PAGE_12345");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
 });
 
-test("META TEST 6: Ad Claim Analyzer extracts authenticity claims", () => {
-  const text = "100% original imported shoes with genuine leather guarantee!";
-  const analysis = analyzeAdClaims(text, "meta_ad");
+test("META TEST 5: Ad text extraction", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_VALID_MOCK_TOKEN";
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [
+          {
+            id: "AD_TXT",
+            ad_creative_bodies: ["Line 1 text", "Line 2 text"],
+            ad_creative_link_titles: ["Headline 1"],
+            ad_creative_link_descriptions: ["Description text"],
+          },
+        ],
+      }),
+    });
 
-  assert.ok(analysis.claims_detected.some((c) => /100% original|genuine/i.test(c)));
-  assert.ok(analysis.ad_pressure_signals.some((s) => s.type === "authenticity_claim"));
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/txt1/",
+      brand: "SomeBrand",
+    });
+
+    assert.equal(result.adText, "Line 1 text\nLine 2 text");
+    assert.equal(result.linkTitle, "Headline 1");
+    assert.equal(result.linkDescription, "Description text");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
 });
 
-test("META TEST 7: Ad Claim Analyzer extracts certification and authority claims", () => {
-  const text = "FDA approved and ISO certified formula. Doctor recommended.";
-  const analysis = analyzeAdClaims(text, "meta_ad");
+test("META TEST 6: Snapshot URL extraction", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_VALID_MOCK_TOKEN";
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [
+          {
+            id: "AD_SNAP",
+            ad_snapshot_url: "https://www.facebook.com/ads/archive/render_ad/?id=AD_SNAP",
+          },
+        ],
+      }),
+    });
 
-  assert.ok(analysis.claims_detected.some((c) => /FDA approved|ISO certified|Doctor recommended/i.test(c)));
-  assert.ok(analysis.ad_pressure_signals.some((s) => s.type === "authority_certification"));
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/snap1/",
+      brand: "SomeBrand",
+    });
+
+    assert.equal(result.adSnapshotUrl, "https://www.facebook.com/ads/archive/render_ad/?id=AD_SNAP");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
 });
 
-test("META TEST 8: Ad Claim Analyzer extracts multi-buy and price anchoring claims", () => {
-  const text = "Mega offer: Buy 1 Get 3 Free! MRP ₹10,000 now only ₹499.";
-  const analysis = analyzeAdClaims(text, "meta_ad");
+test("META TEST 7: Delivery dates extraction and normalization", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_VALID_MOCK_TOKEN";
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [
+          {
+            id: "AD_DATES",
+            ad_delivery_start_time: "2026-09-01T12:30:00+0000",
+            ad_delivery_stop_time: "2026-09-15T18:00:00+0000",
+          },
+        ],
+      }),
+    });
 
-  assert.ok(analysis.claims_detected.some((c) => /buy 1 get 3|mrp.*499/i.test(c)));
-  assert.ok(analysis.ad_pressure_signals.some((s) => s.type === "extreme_discount" || s.type === "price_anchoring"));
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/dates1/",
+      brand: "SomeBrand",
+    });
+
+    assert.equal(result.deliveryStart, "2026-09-01");
+    assert.equal(result.deliveryEnd, "2026-09-15");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
 });
 
-test("META TEST 9: Advertiser match adds positive consistency signal", () => {
-  const normalized = {
-    product_name: [{ source: "instagram", value: "Smart Watch" }],
-    brand: [{ source: "instagram", value: "FitBrand" }],
-    seller: [{ source: "instagram", value: "fitbrand_official" }, { source: "meta_ad", value: "FitBrand Official" }],
-    price: [],
-    manufacturer: [],
-    website: [],
-    contact: [],
-    claims: [],
-    license_certification: [],
-    product_category: [],
-  };
+test("META TEST 8: Claim detection across discount, urgency, scarcity, authenticity, certification", () => {
+  const copy = "Special 90% OFF! Buy 1 Get 2 Free. 100% Original Genuine Shoes. FDA approved formula. TODAY ONLY - Only 2 left in stock! 5-star rated.";
+  const claims = analyzeAdClaims(copy, "meta_ad");
+
+  assert.ok(claims.price_claims.some((c) => c.includes("90% OFF")));
+  assert.ok(claims.authenticity_claims.some((c) => /100% original|genuine/i.test(c)));
+  assert.ok(claims.urgency_claims.some((c) => /today only/i.test(c)));
+  assert.ok(claims.scarcity_claims.some((c) => /only 2 left/i.test(c)));
+  assert.ok(claims.authority_claims.some((c) => /fda approved/i.test(c)));
+  assert.ok(claims.social_proof_claims.some((c) => /5-star/i.test(c)));
+  assert.ok(claims.ad_pressure_signals.length >= 4);
+});
+
+test("META TEST 9: Advertiser MATCH", () => {
+  const check = compareAdvertiserIdentity("joota_vyapari", "Joota Vyapari", "Joota Vyapari Store");
+  assert.equal(check.result, "MATCH");
+  assert.ok(check.details.includes("matches"));
+});
+
+test("META TEST 10: Advertiser MISMATCH", () => {
+  const check = compareAdvertiserIdentity("joota_vyapari", "XYZ Electronics Pvt Ltd", "Random Corp");
+  assert.equal(check.result, "MISMATCH");
+  assert.ok(check.details.includes("does not match"));
+});
+
+test("META TEST 11: Advertiser UNKNOWN", () => {
+  const check = compareAdvertiserIdentity(null, null, null);
+  assert.equal(check.result, "UNKNOWN");
+});
+
+test("META TEST 12: API token missing returns unavailable without throwing", async () => {
+  const originalToken = process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  try {
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/test/",
+      instagramHandle: "teststore",
+    });
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.error?.includes("No Meta Ad Library access token"));
+    assert.equal(result.ads.length, 0);
+  } finally {
+    if (originalToken) process.env.META_AD_LIBRARY_ACCESS_TOKEN = originalToken;
+  }
+});
+
+test("META TEST 13: API timeout handled gracefully", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_MOCK_TOKEN";
+  try {
+    globalThis.fetch = async () => {
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    };
+
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/timeout1/",
+      instagramHandle: "timeoutstore",
+    });
+
+    assert.ok(["unavailable", "error"].includes(result.status));
+    assert.ok(result.error?.includes("timed out") || result.error?.includes("aborted"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
+});
+
+test("META TEST 14: API error handled gracefully", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_MOCK_TOKEN";
+  try {
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: { message: "Internal server error from Meta" } }),
+    });
+
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/err1/",
+      instagramHandle: "errstore",
+    });
+
+    assert.ok(["error", "unavailable"].includes(result.status));
+    assert.ok(result.error?.includes("Internal server error"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
+});
+
+test("META TEST 15: Meta commercial coverage unavailable preserves limitation", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_MOCK_TOKEN";
+  try {
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        error: {
+          message: "Unsupported country or commercial ads archive coverage restricted for ad_type ALL in IN",
+          code: 100,
+        },
+      }),
+    });
+
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/cov1/",
+      instagramHandle: "covstore",
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.limitation?.includes("Meta's official Ad Library API did not provide the requested commercial-ad coverage"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
+});
+
+test("META TEST 16: Zero results returns not_found without fabricating data", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.META_AD_LIBRARY_ACCESS_TOKEN = "EAAB_MOCK_TOKEN";
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [] }),
+    });
+
+    const result = await collectMetaAdEvidence({
+      instagramUrl: "https://www.instagram.com/p/zero1/",
+      instagramHandle: "zero_ads_store",
+    });
+
+    assert.equal(result.status, "not_found");
+    assert.equal(result.ads.length, 0);
+    assert.equal(result.totalFound, 0);
+    assert.ok(result.limitation?.includes("No matching ads were returned by the Meta Ad Library API for the current query."));
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
+});
+
+test("META TEST 17: Zero results does NOT increase risk", () => {
   const evidence = {
     source: { platform: "instagram", url: "https://instagram.com/p/1" },
-    account: { username: "fitbrand_official", display_name: "FitBrand Official" },
-    post: { caption: "Smart Watch" },
+    account: { username: "artisan_pottery" },
+    post: { caption: "Handmade ceramic cups" },
     media: [],
     external_links: [],
     evidence: [],
     missing_information: [],
     errors: [],
   };
+  const product = { name: "Handmade Mug", brand: "Artisan Pottery" };
+  const seller = { username: "artisan_pottery" };
   const metaAd = {
-    status: "found",
-    libraryId: "123456",
-    advertiserName: "FitBrand Official",
+    status: "not_found",
+    queryTerms: ["artisan_pottery"],
+    country: "IN",
+    ads: [],
+    totalFound: 0,
+    source: "meta_ad_library",
+    collectedAt: new Date().toISOString(),
+    limitation: "No matching ads were returned by the Meta Ad Library API for the current query.",
     evidenceSource: "Meta Ad Library",
   };
 
-  const matrix = buildTrustMatrix(normalized, evidence, null, null, metaAd);
-  assert.ok(matrix.trust_signals.some((s) => s.signal.includes("Meta Ad advertiser identity aligns with Instagram seller")));
+  const risk = evaluateRisk(evidence, product, seller, [], null, null, null, null, null, metaAd);
+  assert.notEqual(risk.risk_level, "HIGH");
+  assert.equal(risk.risk_signals.length, 0);
 });
 
-test("META TEST 10: Advertiser mismatch with website flags risk signal", () => {
-  const normalized = {
-    product_name: [],
-    brand: [],
-    seller: [{ source: "meta_ad", value: "XYZ Global Marketing" }, { source: "website", value: "ABC Logistics Pvt Ltd" }],
-    price: [],
-    manufacturer: [],
-    website: [],
-    contact: [],
-    claims: [],
-    license_certification: [],
-    product_category: [],
-  };
+test("META TEST 18: Meta ad presence does NOT force LOW risk", () => {
   const evidence = {
     source: { platform: "instagram", url: "https://instagram.com/p/1" },
-    account: { username: "random_store" },
-    post: { caption: "Sale" },
+    account: { username: "unverified_seller" },
+    post: { caption: "Buy cheap watch" },
     media: [],
-    external_links: ["https://abclogistics.in"],
+    external_links: [],
+    evidence: [],
+    missing_information: [],
+    errors: [],
+  };
+  const product = { name: "Watch", brand: null };
+  const seller = { username: "unverified_seller" };
+  const metaAd = {
+    status: "found",
+    queryTerms: ["unverified_seller"],
+    country: "IN",
+    ads: [{ libraryId: "AD_999", advertiserName: "Watch Seller", publisherPlatforms: ["INSTAGRAM"], evidenceSource: "meta_ad_library" }],
+    totalFound: 1,
+    source: "meta_ad_library",
+    collectedAt: new Date().toISOString(),
+    evidenceSource: "Meta Ad Library",
+  };
+
+  const risk = evaluateRisk(evidence, product, seller, [], null, null, null, null, null, metaAd);
+  assert.notEqual(risk.risk_level, "LOW");
+});
+
+test("META TEST 19: Existing Instagram evidence still works", () => {
+  const parsed = parseInstagramUrl("https://www.instagram.com/reel/C8XYZ123/?igsh=token123");
+  assert.equal(parsed.canonicalUrl, "https://www.instagram.com/reel/C8XYZ123/");
+  assert.equal(parsed.type, "reel");
+  assert.equal(parsed.shortcode, "C8XYZ123");
+});
+
+test("META TEST 20: Existing Website evidence still works", async () => {
+  const res = await collectWebsiteEvidence(null);
+  assert.equal(res.status, "not_found");
+  assert.equal(res.domain, "");
+});
+
+// ===========================================================================
+// FEATURE 1: SELLER IDENTITY GRAPH TESTS
+// ===========================================================================
+
+test("FEATURE 1: Seller identity MATCH across Instagram, Meta, and Website", () => {
+  const instagram = {
+    account: { username: "joota_vyapari", display_name: "Joota Vyapari" },
+    post: {},
+    media: [],
+    external_links: ["https://jootavyapari.com"],
+  };
+  const seller = { username: "joota_vyapari", name: "Joota Vyapari" };
+  const metaAd = {
+    advertiserName: "Joota Vyapari",
+    advertiserPageId: "PAGE_1001",
+    status: "found",
+    queryTerms: ["joota_vyapari"],
+    country: "IN",
+    ads: [],
+    totalFound: 1,
+    source: "meta_ad_library",
+    collectedAt: new Date().toISOString(),
+  };
+  const website = {
+    url: "https://jootavyapari.com",
+    domain: "jootavyapari.com",
+    status: "accessible",
+    company: { name: "Joota Vyapari", email: "support@jootavyapari.com", phone: "+91 9876543210", address: null },
+    product: { name: null, brand: null, price: null, description: null },
+    policies: { refund: true, return: true, shipping: true, privacy: true, terms: true },
+    evidence: [],
+    missing_information: [],
+    errors: [],
+  };
+
+  const graph = buildSellerIdentityGraph(instagram, seller, metaAd, website);
+  assert.equal(graph.overallRating, "MATCH");
+  assert.ok(graph.confidence >= 80);
+  assert.ok(graph.relationships.some((r) => r.type === "INSTAGRAM_VS_META" && r.rating === "MATCH"));
+  assert.ok(graph.relationships.some((r) => r.type === "INSTAGRAM_VS_WEBSITE" && r.rating === "MATCH"));
+  assert.ok(graph.relationships.some((r) => r.type === "META_VS_WEBSITE" && r.rating === "MATCH"));
+});
+
+test("FEATURE 1: Seller identity MISMATCH between Instagram and Website", () => {
+  const instagram = {
+    account: { username: "joota_vyapari", display_name: "Joota Vyapari" },
+    post: {},
+    media: [],
+    external_links: ["https://xyzelectronics.com"],
+  };
+  const seller = { username: "joota_vyapari", name: "Joota Vyapari" };
+  const metaAd = {
+    advertiserName: "XYZ Electronics",
+    status: "found",
+    queryTerms: ["joota_vyapari"],
+    country: "IN",
+    ads: [],
+    totalFound: 1,
+    source: "meta_ad_library",
+    collectedAt: new Date().toISOString(),
+  };
+  const website = {
+    url: "https://xyzelectronics.com",
+    domain: "xyzelectronics.com",
+    status: "accessible",
+    company: { name: "XYZ Electronics Pvt Ltd", email: "help@xyzelectronics.com", phone: null, address: null },
+    product: { name: null, brand: null, price: null, description: null },
+    policies: { refund: true, return: true, shipping: true, privacy: true, terms: true },
+    evidence: [],
+    missing_information: [],
+    errors: [],
+  };
+
+  const graph = buildSellerIdentityGraph(instagram, seller, metaAd, website);
+  assert.equal(graph.overallRating, "MISMATCH");
+  assert.ok(graph.relationships.some((r) => r.rating === "MISMATCH"));
+  assert.ok(graph.risk_signals.some((s) => s.signal.includes("Identity mismatch")));
+});
+
+test("FEATURE 1: Missing identity fields yield UNKNOWN without assuming fraud", () => {
+  const instagram = {
+    account: { username: "new_seller", display_name: null },
+    post: {},
+    media: [],
+    external_links: [],
+  };
+  const seller = { username: "new_seller" };
+
+  const graph = buildSellerIdentityGraph(instagram, seller, null, null);
+  assert.equal(graph.overallRating, "UNKNOWN");
+  assert.equal(graph.risk_signals.length, 0); // Must NOT assume fraud
+});
+
+// ===========================================================================
+// FEATURE 2: CROSS-SOURCE PRODUCT CONSISTENCY TESTS
+// ===========================================================================
+
+test("FEATURE 2: Product brand MATCH (Nike -> Nike)", () => {
+  const instagram = { account: { username: "nike_store" }, post: { caption: "Original Nike Air Max Shoes" }, media: [], external_links: [] };
+  const product = { name: "Air Max", brand: "Nike", price: "₹4,999" };
+  const seller = { username: "nike_store" };
+  const website = {
+    url: "https://nikestore.in",
+    domain: "nikestore.in",
+    status: "accessible",
+    company: { name: "Nike Store India", email: null, phone: null, address: null },
+    product: { name: "Air Max Shoes", brand: "Nike", price: "₹4,999", description: null },
+    policies: { refund: true, return: true, shipping: true, privacy: true, terms: true },
+    evidence: [],
+    missing_information: [],
+    errors: [],
+  };
+
+  const report = evaluateProductConsistency(instagram, product, seller, website);
+  assert.equal(report.fields.brand.rating, "MATCH");
+  assert.equal(report.fields.price.rating, "MATCH");
+});
+
+test("FEATURE 2: Product brand MISMATCH (Nike -> XYZ)", () => {
+  const instagram = { account: { username: "sneaker_hub" }, post: { caption: "Authentic Nike Jordans" }, media: [], external_links: [] };
+  const product = { name: "Jordans", brand: "Nike", price: "₹2,000" };
+  const seller = { username: "sneaker_hub" };
+  const website = {
+    url: "https://sneakerhub.in",
+    domain: "sneakerhub.in",
+    status: "accessible",
+    company: { name: "Sneaker Hub", email: null, phone: null, address: null },
+    product: { name: "Generic Running Shoes", brand: "XYZ Footwear", price: "₹2,000", description: null },
+    policies: { refund: true, return: true, shipping: true, privacy: true, terms: true },
+    evidence: [],
+    missing_information: [],
+    errors: [],
+  };
+
+  const report = evaluateProductConsistency(instagram, product, seller, website);
+  assert.equal(report.fields.brand.rating, "MISMATCH");
+  assert.equal(report.overallRating, "MISMATCH");
+});
+
+test("FEATURE 2: Pack size MISMATCH (1 KG -> 500 G)", () => {
+  const instagram = { account: { username: "protein_seller" }, post: { caption: "Whey Protein 1 KG tub on discount!" }, media: [], external_links: [] };
+  const product = { name: "Whey Protein 1 KG", brand: "Optimum" };
+  const seller = { username: "protein_seller" };
+  const media = {
+    media: [],
+    ocr: { text: "Net Weight: 500 g Whey Protein Powder", confidence: 90, status: "success" },
+    packaging: {
+      product: { name: "Whey Protein", brand: "Optimum", category: null, price: null, mrp: null },
+      manufacturer: { name: null, address: null, contact: null },
+      regulatory: { license_numbers: [], certifications: [] },
+      dates: { manufactured: null, expiry: null, best_before: null },
+      claims: [],
+      websites: [],
+      contact_information: [],
+      facts: [],
+    },
+    video_analysis: null,
+    status: "analyzed",
+    evidence: [],
+    errors: [],
+  };
+
+  const report = evaluateProductConsistency(instagram, product, seller, null, media);
+  assert.equal(report.fields.pack_size.rating, "MISMATCH");
+});
+
+test("FEATURE 2: Missing price yields UNKNOWN, never MISMATCH or fraud", () => {
+  const instagram = { account: { username: "watch_store" }, post: { caption: "Luxury watch available DM for price" }, media: [], external_links: [] };
+  const product = { name: "Luxury Watch", brand: "Rolex", price: null };
+  const seller = { username: "watch_store" };
+
+  const report = evaluateProductConsistency(instagram, product, seller);
+  assert.equal(report.fields.price.rating, "UNKNOWN");
+  assert.equal(report.risk_signals.length, 0);
+});
+
+// ===========================================================================
+// FEATURE 3: POST-PURCHASE RECEIVED PRODUCT VERIFICATION TESTS
+// ===========================================================================
+
+test("FEATURE 3: Post-purchase session lifecycle (store, retrieve, remove)", () => {
+  const dummyResult = {
+    product: { name: "Air Jordan 1", brand: "Nike" },
+    seller: { username: "shoe_seller" },
+    risk: { risk_level: "LOW", confidence: 80, positive_signals: [], risk_signals: [], missing_information: [], consistency_checks: [], recommendation: "OK" },
+    evidence: { source: { platform: "instagram", url: "https://instagram.com/p/1" }, account: { username: "shoe_seller" }, post: {}, media: [], external_links: [], evidence: [], missing_information: [], errors: [] },
+    status: "EVIDENCE_COLLECTED",
+  };
+
+  storePostPurchaseSession("919876543210@s.whatsapp.net", dummyResult, "REP-TEST-123");
+  const session = getPostPurchaseSession("919876543210@s.whatsapp.net");
+  assert.ok(session);
+  assert.equal(session.investigationId, "REP-TEST-123");
+  assert.equal(session.originalResult.product.name, "Air Jordan 1");
+
+  removePostPurchaseSession("919876543210@s.whatsapp.net");
+  assert.equal(getPostPurchaseSession("919876543210@s.whatsapp.net"), null);
+});
+
+test("FEATURE 3: Post-purchase comparison detects Brand MISMATCH (Advertised Nike vs Received XYZ)", () => {
+  const originalResult = {
+    product: { name: "Air Jordan 1", brand: "Nike" },
+    seller: { username: "sneaker_shop" },
+    risk: { risk_level: "LOW", confidence: 85, positive_signals: [], risk_signals: [], missing_information: [], consistency_checks: [], recommendation: "OK" },
+    evidence: { source: { platform: "instagram", url: "https://instagram.com/p/1" }, account: { username: "sneaker_shop" }, post: {}, media: [], external_links: [], evidence: [], missing_information: [], errors: [] },
+    status: "EVIDENCE_COLLECTED",
+  };
+
+  const received = analyzeReceivedProductText("Brand: XYZ Fashion\nItem: Casual Sneakers\nMade in India\nNet Qty: 1 Pair");
+  const comparison = compareAdvertisedVsReceived(originalResult, received, "REP-TEST-001");
+
+  assert.equal(comparison.fields.brand.rating, "MISMATCH");
+  assert.equal(comparison.overallRating, "MISMATCH");
+  assert.equal(comparison.updatedRiskLevel, "HIGH");
+  assert.ok(comparison.mismatchesDetected.some((m) => m.toLowerCase().includes("brand")));
+});
+
+test("FEATURE 3: Post-purchase comparison detects Quantity MISMATCH (Advertised 1 KG vs Received 500 G)", () => {
+  const originalResult = {
+    product: { name: "Creatine Monohydrate 1 KG", brand: "MuscleBlaze" },
+    seller: { username: "gym_supplements" },
+    risk: { risk_level: "LOW", confidence: 85, positive_signals: [], risk_signals: [], missing_information: [], consistency_checks: [], recommendation: "OK" },
+    evidence: { source: { platform: "instagram", url: "https://instagram.com/p/1" }, account: { username: "gym_supplements" }, post: { caption: "Creatine 1 KG pack" }, media: [], external_links: [], evidence: [], missing_information: [], errors: [] },
+    status: "EVIDENCE_COLLECTED",
+  };
+
+  const received = analyzeReceivedProductText("MuscleBlaze Creatine Monohydrate\nNet Weight: 500 g\nBatch: MB99");
+  const comparison = compareAdvertisedVsReceived(originalResult, received);
+
+  assert.equal(comparison.fields.brand.rating, "MATCH");
+  assert.equal(comparison.fields.quantity.rating, "MISMATCH");
+  assert.equal(comparison.overallRating, "MISMATCH");
+});
+
+test("FEATURE 3: Post-purchase comparison detects Country of Origin MISMATCH (Advertised India vs Received China)", () => {
+  const originalResult = {
+    product: { name: "Cotton Kurta", brand: "DesiWeaves" },
+    seller: { username: "desi_weaves" },
+    risk: { risk_level: "LOW", confidence: 85, positive_signals: [], risk_signals: [], missing_information: [], consistency_checks: [], recommendation: "OK" },
+    evidence: { source: { platform: "instagram", url: "https://instagram.com/p/1" }, account: { username: "desi_weaves" }, post: { caption: "Handcrafted 100% Cotton Made in India" }, media: [], external_links: [], evidence: [], missing_information: [], errors: [] },
+    status: "EVIDENCE_COLLECTED",
+  };
+
+  const received = analyzeReceivedProductText("DesiWeaves Cotton Kurta\nMade in China\nSize: L");
+  const comparison = compareAdvertisedVsReceived(originalResult, received);
+
+  assert.equal(comparison.fields.country_of_origin.rating, "MISMATCH");
+  assert.equal(comparison.overallRating, "MISMATCH");
+});
+
+// ===========================================================================
+// FEATURE 4: EVIDENCE TIMELINE TESTS
+// ===========================================================================
+
+test("FEATURE 4: Evidence timeline constructs chronologically ordered events", () => {
+  const evidence = {
+    source: { platform: "instagram", url: "https://instagram.com/p/1" },
+    account: { username: "vintage_seller" },
+    post: { caption: "Selling vintage camera", timestamp: "2026-10-01T10:00:00.000Z" },
+    media: [],
+    external_links: ["https://vintagestore.com"],
+    claims: [{ claim: "100% Original", type: "authenticity", confidence: 90 }],
     evidence: [],
     missing_information: [],
     errors: [],
   };
   const website = {
+    url: "https://vintagestore.com",
+    domain: "vintagestore.com",
     status: "accessible",
-    domain: "abclogistics.in",
-    url: "https://abclogistics.in",
-    company: { name: "ABC Logistics Pvt Ltd" },
-    product: { name: null, brand: null, price: null },
-    contact: {},
+    company: { name: "Vintage Store", email: null, phone: null, address: null },
+    product: { name: "Camera", brand: "Canon", price: null, description: null },
     policies: { refund: true, return: true, shipping: true, privacy: true, terms: true },
-    social_links: {},
     evidence: [],
     missing_information: [],
     errors: [],
   };
   const metaAd = {
     status: "found",
-    libraryId: "987654",
-    advertiserName: "XYZ Global Marketing",
-    evidenceSource: "Meta Ad Library",
+    queryTerms: ["vintage_seller"],
+    country: "IN",
+    ads: [{ libraryId: "AD_1", advertiserName: "Vintage Store", publisherPlatforms: ["INSTAGRAM"], deliveryStart: "2026-10-02T12:00:00.000Z", evidenceSource: "meta_ad_library" }],
+    totalFound: 1,
+    source: "meta_ad_library",
+    collectedAt: "2026-10-03T15:00:00.000Z",
   };
 
-  const matrix = buildTrustMatrix(normalized, evidence, website, null, metaAd);
-  assert.ok(matrix.risk_signals.some((s) => s.signal.includes("Meta advertiser and external website business identities are inconsistent")));
+  const timeline = buildEvidenceTimeline({ evidence, website, metaAd });
+  assert.ok(timeline.events.length >= 3);
+  // Verify chronological ordering
+  for (let i = 0; i < timeline.events.length - 1; i++) {
+    const tA = new Date(timeline.events[i].timestamp).getTime();
+    const tB = new Date(timeline.events[i + 1].timestamp).getTime();
+    assert.ok(tA <= tB);
+  }
 });
 
-test("META TEST 11: Pack size / quantity contradiction detected", () => {
-  const normalized = {
-    product_name: [],
-    brand: [],
-    seller: [],
-    price: [],
-    manufacturer: [],
-    website: [],
-    contact: [],
-    claims: [{ source: "meta_ad", value: "Somat 80 tablets ₹499" }],
-    license_certification: [],
-    product_category: [],
-  };
+// ===========================================================================
+// FEATURE 5 & 6: EXPLAINABLE RISK SCORE & EVIDENCE COVERAGE TESTS
+// ===========================================================================
+
+test("FEATURE 5: Risk factors are categorized across SELLER_IDENTITY, ADVERTISING, PRODUCT, etc.", () => {
   const evidence = {
     source: { platform: "instagram", url: "https://instagram.com/p/1" },
-    account: { username: "somat_seller" },
-    post: { caption: "Somat 80 tablets ₹499" },
+    account: { username: "discount_hub" },
+    post: { caption: "HURRY TODAY ONLY 90% OFF" },
     media: [],
     external_links: [],
     evidence: [],
     missing_information: [],
     errors: [],
   };
-  const media = {
-    status: "analyzed",
-    media: [],
-    ocr: { status: "success", text: "Somat Dishwasher 40 tablets pack", confidence: 90, words: [] },
-    packaging: {
-      product: { name: "Somat Dishwasher", brand: "Somat", price: null, mrp: null, net_quantity: "40 tablets", category: null },
-      manufacturer: { name: null, address: null },
-      regulatory: { license_numbers: [], certifications: [] },
-      dates: { manufactured: null, expiry: null, best_before: null },
-      claims: ["40 tablets"],
-      contact_information: [],
-      websites: [],
-      facts: [],
-    },
-    video_analysis: null,
-    evidence: [],
-    errors: [],
-  };
-  const metaAd = {
-    status: "found",
-    adText: "Somat 80 tablets ₹499",
-    evidenceSource: "Meta Ad Library",
-  };
-
-  const matrix = buildTrustMatrix(normalized, evidence, null, media, metaAd);
-  assert.ok(matrix.risk_signals.some((s) => s.signal.includes("Pack size / quantity contradiction")));
-});
-
-test("META TEST 12: Multiple aggressive ad pressure signals generate risk warning", () => {
+  const product = { name: "Smart Watch", brand: "Apple" };
+  const seller = { username: "discount_hub" };
   const adClaims = {
-    claims_detected: ["90% OFF", "TODAY ONLY", "ONLY 2 LEFT", "100% ORIGINAL GUARANTEED"],
+    claims_detected: ["90% OFF"],
     ad_pressure_signals: [
-      { type: "extreme_discount", text: "90% OFF", source: "meta_ad", meaning: "Unusually large discount claim" },
-      { type: "urgency", text: "TODAY ONLY", source: "meta_ad", meaning: "Urgency language" },
-      { type: "scarcity", text: "ONLY 2 LEFT", source: "meta_ad", meaning: "Scarcity language" },
+      { type: "price_anchoring", text: "90% OFF", source: "instagram", meaning: "Extreme discount claim" },
+      { type: "urgency", text: "TODAY ONLY", source: "instagram", meaning: "Urgency pressure" },
     ],
+    price_claims: [],
+    authenticity_claims: [],
+    urgency_claims: ["TODAY ONLY"],
+    scarcity_claims: [],
+    authority_claims: [],
+    performance_claims: [],
+    social_proof_claims: [],
+    price_anchoring_claims: ["90% OFF"],
+    pressure_signals: [],
   };
 
-  const normalized = {
-    product_name: [],
-    brand: [],
-    seller: [],
-    price: [],
-    manufacturer: [],
-    website: [],
-    contact: [],
-    claims: [],
-    license_certification: [],
-    product_category: [],
-  };
+  const risk = evaluateRisk(evidence, product, seller, [], null, null, null, null, null, null, adClaims);
+  assert.ok(risk.risk_factors);
+  assert.ok(risk.risk_factors.some((f) => f.category === "ADVERTISING"));
+  assert.ok(typeof risk.score === "number");
+  assert.ok(typeof risk.evidence_coverage === "number");
+});
+
+test("FEATURE 6: Evidence Coverage calculates independent data source availability (0-100%)", () => {
   const evidence = {
     source: { platform: "instagram", url: "https://instagram.com/p/1" },
-    account: { username: "deal_hunter" },
-    post: { caption: "Deal" },
-    media: [],
+    account: { username: "organic_farm" },
+    post: { caption: "Fresh Honey" },
+    media: [{ type: "image", url: "https://img.jpg", source: "instagram" }],
     external_links: [],
     evidence: [],
     missing_information: [],
     errors: [],
   };
-
-  const matrix = buildTrustMatrix(normalized, evidence, null, null, null, adClaims);
-  assert.ok(matrix.risk_signals.some((s) => s.signal.includes("Multiple unverified high-pressure advertising patterns")));
-});
-
-test("META TEST 13: Meta evidence presence does NOT automatically make risk LOW", () => {
-  const evidence = {
-    source: { platform: "instagram", url: "https://instagram.com/p/1" },
-    account: { username: "unknown_seller" },
-    post: { caption: "Buy now" },
-    media: [],
-    external_links: [],
-    evidence: [],
-    missing_information: ["No external website"],
-    errors: [],
-  };
-  const product = { name: "Mystery Gadget", brand: null };
-  const seller = { username: "unknown_seller" };
-  const metaAd = {
-    status: "found",
-    libraryId: "12345",
-    advertiserName: "Random LLC",
-    evidenceSource: "Meta Ad Library",
-  };
-
-  const risk = evaluateRisk(evidence, product, seller, [], null, null, null, null, null, metaAd);
-  // Absence of independent website or product proof should NOT force LOW risk just because Meta Ad exists
-  assert.notEqual(risk.risk_level, "LOW");
-});
-
-test("META TEST 14: Meta absence does NOT automatically mark HIGH risk", () => {
-  const evidence = {
-    source: { platform: "instagram", url: "https://instagram.com/p/1" },
-    account: { username: "handmade_pottery" },
-    post: { caption: "Handmade clay pots" },
-    media: [],
-    external_links: [],
+  const website = {
+    url: "https://organicfarm.in",
+    domain: "organicfarm.in",
+    status: "accessible",
+    company: { name: "Organic Farm", email: "care@organicfarm.in", phone: null, address: null },
+    product: { name: "Honey", brand: "Farm", price: null, description: null },
+    policies: { refund: true, return: true, shipping: true, privacy: true, terms: true },
     evidence: [],
     missing_information: [],
     errors: [],
   };
-  const product = { name: "Handmade Clay Pot", brand: "Artisan Pots" };
-  const seller = { username: "handmade_pottery" };
-  const metaAd = {
-    status: "not_found",
-    evidenceSource: "Meta Ad Library",
-  };
 
-  const risk = evaluateRisk(evidence, product, seller, [], null, null, null, null, null, metaAd);
-  // Organic/non-ad posts shouldn't be high risk simply because they don't run paid ads
-  assert.notEqual(risk.risk_level, "HIGH");
+  const coverage = calculateEvidenceCoverage(evidence, website);
+  assert.ok(coverage >= 40);
+  assert.ok(coverage <= 100);
 });
 
-test("META TEST 15: Formatter includes Meta Ad intelligence & Claim sections when present", () => {
+// ===========================================================================
+// FEATURE 7 & 8: HTML REPORT & WHATSAPP UX INTEGRATION
+// ===========================================================================
+
+test("FEATURE 7 & 8: WhatsApp formatting includes Post-Purchase prompt and structured badges", () => {
   const result = {
-    product: { name: "Nike Air Max", brand: "Nike", price: "₹1,499" },
-    seller: { username: "nikedeals_in", name: "Nike Deals India" },
+    product: { name: "Running Shoes", brand: "FastTrack" },
+    seller: { username: "joota_vyapari" },
     risk: {
       risk_level: "MEDIUM",
-      confidence: 65,
-      positive_signals: [],
-      risk_signals: ["Unusually low price compared to authentic market rate"],
-      missing_information: ["No website provided"],
-      consistency_checks: [],
-      recommendation: "Check authenticity before payment",
-    },
-    meta_ad_evidence: {
-      status: "found",
-      libraryId: "777888",
-      advertiserName: "Nike Deals India",
-      publisherPlatforms: ["instagram", "facebook"],
-      deliveryStart: "2026-09-20",
-      deliveryEnd: "Active",
-      adText: "Original Nike Shoes ₹1,499. Today Only! 90% OFF.",
-      evidenceSource: "Meta Ad Library",
-    },
-    ad_claim_analysis: {
-      claims_detected: ["₹1,499", "90% OFF", "Today Only", "Original"],
-      ad_pressure_signals: [
-        { type: "extreme_discount", text: "90% OFF", source: "meta_ad", meaning: "Unusually large discount" },
-        { type: "urgency", text: "Today Only", source: "meta_ad", meaning: "Urgency language" },
-      ],
-    },
-    evidence: {
-      source: { platform: "instagram", url: "https://instagram.com/p/nike1" },
-      account: { username: "nikedeals_in" },
-      post: { caption: "Original Nike Shoes ₹1,499" },
-      media: [],
-      external_links: [],
-      evidence: [],
+      confidence: 78,
+      score: 55,
+      evidence_coverage: 82,
+      positive_signals: ["Seller account identified: @joota_vyapari"],
+      risk_signals: ["Seller identity inconsistency", "Extreme discount claim", "Product information mismatch"],
       missing_information: [],
-      errors: [],
+      consistency_checks: [],
+      recommendation: "Check seller reviews before purchasing.",
     },
+    evidence: { source: { platform: "instagram", url: "https://instagram.com/p/1" }, account: { username: "joota_vyapari" }, post: {}, media: [], external_links: [], evidence: [], missing_information: [], errors: [] },
     status: "EVIDENCE_COLLECTED",
   };
 
-  const formatted = formatVerificationResult(result);
-  assert.ok(formatted.includes("META AD INTELLIGENCE"));
-  assert.ok(formatted.includes("Nike Deals India"));
-  assert.ok(formatted.includes("777888"));
-  assert.ok(formatted.includes("AD CLAIM ANALYSIS"));
-  assert.ok(formatted.includes("90% OFF"));
-  assert.ok(formatted.includes("Meta Ad        ✅"));
+  const text = formatVerificationResult(result, "REP-TEST-888");
+  assert.ok(text.includes("🔍 VERIQOO TRUST CHECK"));
+  assert.ok(text.includes("DID YOU RECEIVE THE PRODUCT?"));
+  assert.ok(text.includes("Evidence Coverage: 82%"));
+  assert.ok(text.includes("Report ID: REP-TEST-888"));
 });
 
-test("META TEST 16: HTML report includes Meta Ad section and provenance", () => {
-  const result = {
-    product: { name: "Nike Shoes", brand: "Nike" },
-    seller: { username: "nikedeals" },
-    risk: { risk_level: "MEDIUM", confidence: 60, positive_signals: [], risk_signals: [], missing_information: [], consistency_checks: [], recommendation: "Verify" },
-    meta_ad_evidence: {
-      status: "found",
-      libraryId: "LIB-999",
-      advertiserName: "Global Shoes Co",
-      publisherPlatforms: ["instagram"],
-      adText: "Buy 1 Get 3 Free Nike shoes",
-      evidenceSource: "Meta Ad Library",
-    },
-    ad_claim_analysis: {
-      claims_detected: ["Buy 1 Get 3 Free"],
-      ad_pressure_signals: [
-        { type: "extreme_discount", text: "Buy 1 Get 3 Free", source: "meta_ad", meaning: "High pressure discount" },
-      ],
-    },
-    evidence: { source: { platform: "instagram", url: "https://instagram.com/p/1" }, account: {}, post: {}, media: [], external_links: [], evidence: [], missing_information: [], errors: [] },
-    status: "EVIDENCE_COLLECTED",
-  };
 
-  const data = buildReportData(result);
-  const html = buildReportHtml(data, result);
-
-  assert.ok(html.includes("Meta Ad Intelligence"));
-  assert.ok(html.includes("Global Shoes Co"));
-  assert.ok(html.includes("LIB-999"));
-  assert.ok(html.includes("Ad Claim &amp; Pressure Analysis") || html.includes("Ad Claim & Pressure Analysis"));
-  assert.ok(html.includes("Buy 1 Get 3 Free"));
-});
-
-test("META TEST 17: No fabricated Meta data returned", () => {
-  const metaAd = {
-    status: "not_found",
-    evidenceSource: "Meta Ad Library",
-  };
-  assert.equal(metaAd.libraryId, undefined);
-  assert.equal(metaAd.advertiserName, undefined);
-  assert.equal(metaAd.adText, undefined);
-});
-
-test("META TEST 18: Meta failure does not break orchestrator normalization or report", () => {
-  const failedResult = {
-    product: { name: "Handmade Shirt", brand: "LocalBrand" },
-    seller: { username: "local_artisan" },
-    risk: { risk_level: "LOW", confidence: 75, positive_signals: [], risk_signals: [], missing_information: [], consistency_checks: [], recommendation: "Safe" },
-    meta_ad_evidence: {
-      status: "unavailable",
-      error: "Timeout contacting Meta Graph API",
-      evidenceSource: "Meta Ad Library",
-    },
-    evidence: { source: { platform: "instagram", url: "https://instagram.com/p/1" }, account: {}, post: {}, media: [], external_links: [], evidence: [], missing_information: [], errors: [] },
-    status: "EVIDENCE_COLLECTED",
-  };
-
-  const data = buildReportData(failedResult);
-  const html = buildReportHtml(data, failedResult);
-  assert.ok(html.includes("Handmade Shirt"));
-  assert.ok(!html.includes("LIB-"));
-});

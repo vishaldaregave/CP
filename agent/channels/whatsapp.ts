@@ -25,7 +25,7 @@ import { resolve } from "node:path";
 import ffmpegPath from "ffmpeg-static";
 import QRCode from "qrcode";
 import type { UserContent } from "ai";
-import { runVerificationPipeline } from "../verification/index.ts";
+import { runVerificationPipeline, getPostPurchaseSession, runPostPurchaseVerification } from "../verification/index.ts";
 
 /**
  * eve custom channel: WhatsApp via Baileys (unofficial WhatsApp Web API).
@@ -1059,6 +1059,43 @@ export async function handleInboundMessage(msg: WAMessage): Promise<void> {
             logger: socket.logger,
           })
         : await downloadMediaMessage(msg, "buffer", {});
+
+      // Check if this sender has a pending post-purchase verification session
+      const postPurchaseSession = getPostPurchaseSession(jid);
+      if (postPurchaseSession && img) {
+        const mimeType = content?.imageMessage?.mimetype ?? "image/jpeg";
+        const handled = await runPostPurchaseVerification(
+          jid,
+          img as Buffer,
+          mimeType,
+          async (targetJid, text) => {
+            const currentSock = socket ?? getGlobal().socket;
+            if (currentSock) {
+              await sendText(currentSock, targetJid, text);
+            }
+          },
+          async (targetJid, filePath, fileName, docMime) => {
+            const currentSock = socket ?? getGlobal().socket;
+            if (currentSock) {
+              try {
+                const fileBuffer = await import("node:fs/promises").then((fs) => fs.readFile(filePath));
+                await currentSock.sendMessage(targetJid, {
+                  document: fileBuffer,
+                  fileName: fileName,
+                  mimetype: docMime,
+                  caption: `📄 Post-Purchase Investigation Report (${fileName})`,
+                });
+              } catch (docErr) {
+                console.error(`[WA] Failed to attach post-purchase document:`, docErr);
+              }
+            }
+          }
+        );
+        if (handled) {
+          return;
+        }
+      }
+
       if (caption) parts.push({ type: "text", text: caption });
       if (img) {
         parts.push({

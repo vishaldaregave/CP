@@ -9,6 +9,7 @@ import type {
   ConsistencyRating,
   PriceConsistencyRating,
   ClaimsConsistencyRating,
+  AdvertiserIdentityCheck,
 } from "./types.ts";
 
 function normalizeString(str?: string | null): string {
@@ -281,5 +282,87 @@ export function compareImageWithInstagramAndWebsite(
       contact: webContactMatch,
     },
     details,
+  };
+}
+
+/**
+ * Compares Instagram seller identity, Meta advertiser / page identity, and Website seller identity.
+ */
+export function compareAdvertiserIdentity(
+  instagramSeller: string | null,
+  metaAdvertiser: string | null,
+  websiteSeller: string | null,
+): AdvertiserIdentityCheck {
+  const normInsta = normalizeString(instagramSeller);
+  const normMeta = normalizeString(metaAdvertiser);
+  const normWeb = normalizeString(websiteSeller);
+
+  if (!normMeta) {
+    return {
+      instagramSeller,
+      metaAdvertiser,
+      websiteSeller,
+      result: "UNKNOWN",
+      details: "No Meta advertiser identity available for comparison.",
+    };
+  }
+
+  if (!normInsta && !normWeb) {
+    return {
+      instagramSeller,
+      metaAdvertiser,
+      websiteSeller,
+      result: "UNKNOWN",
+      details: `Meta advertiser recorded as "${metaAdvertiser}", but seller profile/website is missing.`,
+    };
+  }
+
+  const matchesInsta = Boolean(normInsta && (normMeta === normInsta || normMeta.includes(normInsta) || normInsta.includes(normMeta)));
+  const matchesWeb = Boolean(normWeb && (normMeta === normWeb || normMeta.includes(normWeb) || normWeb.includes(normMeta)));
+
+  if (matchesInsta && (matchesWeb || !normWeb)) {
+    return {
+      instagramSeller,
+      metaAdvertiser,
+      websiteSeller,
+      result: "MATCH",
+      details: `Meta advertiser "${metaAdvertiser}" matches Instagram seller identity "${instagramSeller}".`,
+    };
+  }
+
+  if (matchesWeb && !matchesInsta) {
+    return {
+      instagramSeller,
+      metaAdvertiser,
+      websiteSeller,
+      result: "PARTIAL",
+      details: `Meta advertiser "${metaAdvertiser}" aligns with website business entity "${websiteSeller}" but differs from Instagram handle "${instagramSeller}".`,
+    };
+  }
+
+  // Check word overlap for partial match
+  const metaWords = (metaAdvertiser || "").toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  const instaWords = (instagramSeller || "").toLowerCase().replace(/[@_.]/g, " ").split(/\s+/).filter((w) => w.length > 2);
+  const webWords = (websiteSeller || "").toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+
+  const hasInstaWordOverlap = metaWords.some((w) => instaWords.some((iw) => iw.includes(w) || w.includes(iw)));
+  const hasWebWordOverlap = metaWords.some((w) => webWords.some((ww) => ww.includes(w) || w.includes(ww)));
+
+  if (hasInstaWordOverlap || hasWebWordOverlap) {
+    return {
+      instagramSeller,
+      metaAdvertiser,
+      websiteSeller,
+      result: "PARTIAL",
+      details: `Meta advertiser "${metaAdvertiser}" partially corresponds to seller profile ("${instagramSeller || websiteSeller}").`,
+    };
+  }
+
+  return {
+    instagramSeller,
+    metaAdvertiser,
+    websiteSeller,
+    result: "MISMATCH",
+    details: `Meta advertiser "${metaAdvertiser}" does not match Instagram seller identity "${instagramSeller || "N/A"}" or website entity "${websiteSeller || "N/A"}".`,
   };
 }
